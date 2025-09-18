@@ -16,8 +16,8 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import matplotlib.colors as mcolors
 
-print('Versionsänderung 17.09.2025, 16:13 Uhr')
-print('Versionsänderung 17.09.2025, 16:26 Uhr')
+print('Versionsï¿½nderung 17.09.2025, 16:13 Uhr')
+print('Versionsï¿½nderung 17.09.2025, 16:26 Uhr')
 
 
 # --- Refactored plotting logic into a function ---
