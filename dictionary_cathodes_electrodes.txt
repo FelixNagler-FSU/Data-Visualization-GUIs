@@ -1,0 +1,11 @@
+{'batch1': ['Batch 1', '', '', ''],
+'batch2': ['Batch 2', '', '', ''],
+'batch3': ['Batch 3', '', '', ''],
+'batch4': ['Batch 4', '', '', ''],
+
+'FN_E3':['FN_250713_KetB_S_1to4 (PTFE, C-Alu)','','',''],
+
+'FN_E4a':['FN_250713_KetB_S_1to4 (CMC, C-Alu)','','',''],
+
+'test': ['Batch 4', '', '', '']
+}
