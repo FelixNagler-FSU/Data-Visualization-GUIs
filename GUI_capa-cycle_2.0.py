@@ -18,6 +18,7 @@ import matplotlib.colors as mcolors
 
 print('Versions�nderung 17.09.2025, 16:13 Uhr')
 print('Versions�nderung 17.09.2025, 16:26 Uhr')
+print('Versions�nderung 18.09.2025, 16:26 Uhr')
 
 
 # --- Refactored plotting logic into a function ---
