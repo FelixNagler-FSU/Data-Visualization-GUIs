@@ -9,17 +9,16 @@ import os
 import ast
 import matplotlib.font_manager as font_manager
 import pickle
+import zipfile
+import xarray as xr
+import shutil
+import sys
 
 # Use TkAgg backend to integrate with the tkinter GUI
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import matplotlib.colors as mcolors
-
-print('Versions�nderung 17.09.2025, 16:13 Uhr')
-print('Versions�nderung 17.09.2025, 16:26 Uhr')
-print('Versions�nderung 18.09.2025, 16:26 Uhr')
-
 
 # --- Refactored plotting logic into a function ---
 def run_plotting(data_path_str, dictionary_name_str, different_batches_str, number_of_cells_str, ce_graph_str,
@@ -28,7 +27,11 @@ def run_plotting(data_path_str, dictionary_name_str, different_batches_str, numb
                  capacity_plot_title_str, capacity_ylabel_text_str, capacity_xmin_str, capacity_xmax_str,
                  capacity_ymin_str, capacity_ymax_str,
                  ce_plot_title_str, ce_ylabel_text_str, ce_xmin_str, ce_xmax_str, ce_ymin_str, ce_ymax_str,
-                 individual_cell_legend_suffix_str):
+                 individual_cell_legend_suffix_str, 
+                 legend_font_size="12", legend_font_family="default",
+                 axis_label_font_size="13", axis_label_font_family="default",
+                 tick_label_font_size="12", tick_label_font_family="default",
+                 close_app_on_plot_close=False):
     """
     This function contains the core plotting logic, refactored to accept user inputs.
     It processes the data and generates the plots based on the provided parameters.
@@ -77,6 +80,9 @@ def run_plotting(data_path_str, dictionary_name_str, different_batches_str, numb
     data_file_names = os.listdir(data_path)
 
     plt.rcParams.update({'font.size': 13})
+    
+    # Store the original matplotlib font settings at the start
+    original_font_family = plt.rcParams['font.family']
 
     # --- Data Processing Section ---
     weight_dict = {}
@@ -102,73 +108,164 @@ def run_plotting(data_path_str, dictionary_name_str, different_batches_str, numb
     specific_charge_capacity_list = []
     specific_discharge_capacity_list = []
 
+    # Use yadg to read .mpr files and extract per-cycle specific capacities (mAh/g)
     for counter_var in range(0, len(data_file_names)):
         file_path = data_path / data_file_names[counter_var]
         filename = data_file_names[counter_var]
 
-        header_line_number = None
-        try:
-            with open(file_path, "r", encoding="cp1252") as f:
-                lines = f.readlines()
-                for i, line in enumerate(lines):
-                    if "mode	ox/red	error" in line.strip():
-                        header_line_number = i - 3
-                    if "mass of active material" in line.lower():
-                        try:
-                            parts = line.split(":")
-                            number_str = parts[1].strip().split(' ')[0]
-                            number_float = float(number_str.replace(',', '.')) / 1000
-                            weight_dict[filename] = number_float
-                            print(f"Active mass for {filename}: {number_float * 1000} mg")
-                        except (IndexError, ValueError):
-                            print(f"Warning: Could not read active mass in {filename}. Skipping file.")
-                            break
-                if filename not in weight_dict:
-                    print(f"Warning: No active mass found in header for {filename}. Skipping file.")
-                    continue
-        except (IOError, IndexError, ValueError):
-            print(f"Warning: Could not find header row or active mass in {filename}. Skipping file.")
-            continue
-
-        if header_line_number is None:
-            print(f"Warning: Header row 'mode ox/red error' not found in {filename}. Skipping file.")
+        # Only process .mpr files
+        if Path(filename).suffix.lower() != '.mpr':
+            print(f"Skipping non-mpr file: {filename}")
             continue
 
         try:
-            data_df = pd.read_table(
-                filepath_or_buffer=file_path,
-                sep='\t',
-                header=header_line_number,
-                decimal=',',
-                encoding='cp1252'
-            )
+            import yadg
+            import json
+        except Exception:
+            print("yadg or json module not available. Ensure yadg is installed.")
+            break
+
+        try:
+            ds_raw = yadg.extractors.extract(filetype='eclab.mpr', path=str(file_path))
         except Exception as e:
-            print(f"Error reading file {filename}: {e}. Skipping.")
+            print(f"Warning: failed to parse {filename} with yadg: {e}. Skipping.")
             continue
 
-        if data_df.shape[0] > max_rows:
-            max_rows = data_df.shape[0]
+        # read active material mass from original_metadata (JSON-like)
+        mass_g = None
+        try:
+            orig = getattr(ds_raw, 'attrs', {}).get('original_metadata', None)
+            if orig is None and 'original_metadata' in ds_raw:
+                orig = ds_raw['original_metadata']
+            if isinstance(orig, (bytes, str)):
+                try:
+                    orig = json.loads(orig)
+                except Exception:
+                    try:
+                        orig = ast.literal_eval(orig)
+                    except Exception:
+                        orig = None
 
-        data_df.rename(columns={'Q discharge/mA.h': 'DisCap', 'Q charge/mA.h': 'ChCap', 'half cycle': 'Half_cycle'},
-                       inplace=True)
+            def _find_key(d, key):
+                if isinstance(d, dict):
+                    if key in d:
+                        return d[key]
+                    for v in d.values():
+                        res = _find_key(v, key)
+                        if res is not None:
+                            return res
+                return None
 
-        half_cycles = data_df['Half_cycle']
-        half_cycles_diff = half_cycles.diff(periods=1)
-        cycle_index = half_cycles_diff.loc[half_cycles_diff > 0.5].index - 1
+            found = None
+            if isinstance(orig, dict) and 'settings' in orig and 'active_material_mass' in orig['settings']:
+                found = orig['settings']['active_material_mass']
+            if found is None:
+                found = _find_key(orig, 'active_material_mass')
+            if found is not None:
+                mg = float(found)
+                mass_g = mg / 1000.0
+                weight_dict[filename] = mass_g
+                print(f"Active mass for {filename}: {mg} mg")
+        except Exception as e:
+            print(f"Warning: error reading metadata for {filename}: {e}")
 
-        filtered_discharge_capacity = data_df['DisCap'].loc[cycle_index]
-        filtered_charge_capacity = data_df['ChCap'].loc[cycle_index]
+        if mass_g is None:
+            print(f"Warning: No active material mass found for {filename}. Skipping file.")
+            continue
 
-        weight = weight_dict[data_file_names[counter_var]]
+        # Convert datatree -> xarray Dataset if needed
+        try:
+            if hasattr(ds_raw, 'to_dataset'):
+                ds = ds_raw.to_dataset()
+            elif hasattr(ds_raw, 'to_xarray'):
+                ds = ds_raw.to_xarray()
+            else:
+                if hasattr(ds_raw, 'get') and ds_raw.get('/') is not None:
+                    ds = ds_raw.get('/').to_dataset()
+                else:
+                    ds = ds_raw
+        except Exception:
+            ds = ds_raw
 
-        filtered_discharge_capacity = filtered_discharge_capacity.loc[filtered_discharge_capacity > 0.0] / weight
-        filtered_charge_capacity = filtered_charge_capacity.loc[filtered_charge_capacity > 0.0] / weight
+        # find Q and half-cycle variables
+        q_arr = None
+        half_arr = None
+        if 'Q charge or discharge' in ds:
+            q_arr = np.asarray(ds['Q charge or discharge'].values, dtype=float)
+        elif 'Q charge/discharge' in ds:
+            q_arr = np.asarray(ds['Q charge/discharge'].values, dtype=float)
+        if 'half cycle' in ds:
+            half_arr = np.asarray(ds['half cycle'].values)
+        elif 'Half_cycle' in ds:
+            half_arr = np.asarray(ds['Half_cycle'].values)
 
-        if first_cycle_discharge_only.lower() == 'yes' and len(filtered_charge_capacity) > 0:
-            filtered_charge_capacity.iloc[0] = np.nan
+        if q_arr is None or half_arr is None:
+            print(f"Warning: Q or half-cycle variables not found in {filename}. Skipping.")
+            continue
 
-        specific_discharge_capacity_list.append(filtered_discharge_capacity.reset_index(drop=True))
-        specific_charge_capacity_list.append(filtered_charge_capacity.reset_index(drop=True))
+        # Build a dataframe and take last sample per half-cycle
+        tmp_df = pd.DataFrame({'Q': q_arr, 'half': half_arr})
+        last_charge = tmp_df[tmp_df['Q'] > 0].groupby('half', sort=False).last()['Q']
+        last_discharge = tmp_df[tmp_df['Q'] < 0].groupby('half', sort=False).last()['Q'].abs()
+
+        # Map half-cycle keys to cycles (keep first-occurrence order)
+        first_cycle_discharge_only_bool = True if str(first_cycle_discharge_only).lower() in ('yes', 'true', '1') else False
+        half_keys = list(dict.fromkeys(list(last_charge.index) + list(last_discharge.index)))
+
+        charge_by_cycle = {}
+        discharge_by_cycle = {}
+
+        for h in half_keys:
+            try:
+                h_int = int(h)
+            except Exception:
+                continue
+
+            if first_cycle_discharge_only_bool:
+                if h_int == 0:
+                    cycle = 1
+                    is_charge = False
+                else:
+                    cycle = (h_int - 2) // 2 + 2
+                    is_charge = (h_int % 2 == 0)
+            else:
+                cycle = h_int // 2 + 1
+                is_charge = (h_int % 2 == 0)
+
+            if is_charge:
+                val = last_charge.get(h, float('nan'))
+                if not (val is None or (isinstance(val, float) and np.isnan(val))):
+                    if cycle not in charge_by_cycle:
+                        charge_by_cycle[cycle] = val
+            else:
+                val = last_discharge.get(h, float('nan'))
+                if not (val is None or (isinstance(val, float) and np.isnan(val))):
+                    if cycle not in discharge_by_cycle:
+                        discharge_by_cycle[cycle] = val
+
+        # assemble per-cycle DataFrame
+        all_cycles = sorted(set(list(charge_by_cycle.keys()) + list(discharge_by_cycle.keys())))
+        df_cycles = pd.DataFrame(index=all_cycles, columns=['charge', 'discharge'], dtype=float)
+        for c in all_cycles:
+            df_cycles.loc[c, 'charge'] = charge_by_cycle.get(c, float('nan'))
+            df_cycles.loc[c, 'discharge'] = discharge_by_cycle.get(c, float('nan'))
+        df_cycles.index.name = 'cycle'
+
+        
+        try:
+            #df_cycles['charge_mAh_g'] = (df_cycles['charge'].astype(float) / 3.6) / float(mass_g) # Convert Q (Coulomb) -> mAh and normalize by active mass (mass_g is in g)
+            df_cycles['charge_mAh_g'] = (df_cycles['charge'].astype(float)) / float(mass_g)
+        except Exception:
+            df_cycles['charge_mAh_g'] = float('nan')
+        try:
+            #df_cycles['discharge_mAh_g'] = (df_cycles['discharge'].astype(float) / 3.6) / float(mass_g) # Convert Q (Coulomb) -> mAh and normalize by active mass (mass_g is in g)
+            df_cycles['discharge_mAh_g'] = (df_cycles['discharge'].astype(float)) / float(mass_g) 
+        except Exception:
+            df_cycles['discharge_mAh_g'] = float('nan')
+
+        # Append per-file Series (indexed 0..N-1 after reset)
+        specific_charge_capacity_list.append(df_cycles['charge_mAh_g'].reset_index(drop=True))
+        specific_discharge_capacity_list.append(df_cycles['discharge_mAh_g'].reset_index(drop=True))
 
     max_len = 0
     for series in specific_discharge_capacity_list:
@@ -241,12 +338,92 @@ def run_plotting(data_path_str, dictionary_name_str, different_batches_str, numb
     specific_charge_capacity['Cycle'] = np.arange(1, specific_charge_capacity.shape[0] + 1)
     coulombic_efficiency['Cycle'] = np.arange(1, coulombic_efficiency.shape[0] + 1)
 
+    # Export data to NetCDF format for each batch
+    # NetCDF is a self-describing, machine-independent data format for array-oriented scientific data
+    plot_name = 'cap-vs-cycle_' + str(data_path.parts[-2])
+    parent_dir = Path(data_path).parent
+    
+    for counter_var in range(0, different_batches):
+        try:
+            # Extract batch information from the legend and file names
+            batch_name = legend_list[counter_var].strip()
+            batch_name_part = data_file_names[cell_numeration[counter_var]]
+            
+            # Create an xarray Dataset structure
+            # This organizes the data into a self-describing dataset with:
+            # - Variables: The actual data arrays (discharge/charge capacities and CE)
+            # - Coordinates: The cycle numbers that index these arrays
+            # - Attributes: Metadata about units and data provenance
+            ds = xr.Dataset(
+                {
+                    # Main capacity measurements with their standard deviations
+                    'discharge_capacity': (['cycle'], specific_discharge_capacity[f'{batch_name_part} mean discharge capacity'].values),
+                    'discharge_capacity_std': (['cycle'], specific_discharge_capacity[f'{batch_name_part} stddev discharge capacity'].values),
+                    'charge_capacity': (['cycle'], specific_charge_capacity[f'{batch_name_part} mean charge capacity'].values),
+                    'charge_capacity_std': (['cycle'], specific_charge_capacity[f'{batch_name_part} stddev charge capacity'].values),
+                    # Coulombic efficiency data
+                    'coulombic_efficiency': (['cycle'], coulombic_efficiency[f'{batch_name_part} mean'].values),
+                    'coulombic_efficiency_std': (['cycle'], coulombic_efficiency[f'{batch_name_part} stddev'].values),
+                },
+                coords={
+                    # Cycle numbers as coordinate variable
+                    'cycle': ('cycle', np.arange(1, max_len + 1)),
+                }
+            )
+
+            # Add metadata attributes to the dataset
+            # These help users understand the data's context and units
+            ds.discharge_capacity.attrs['units'] = 'mAh/g'  # Specific capacity units
+            ds.charge_capacity.attrs['units'] = 'mAh/g'     # Specific capacity units
+            ds.coulombic_efficiency.attrs['units'] = '%'    # CE as percentage
+            
+            # Record batch information and source files
+            ds.attrs['batch_name'] = batch_name  # Name from the legend dictionary
+            ds.attrs['data_files'] = ', '.join(data_file_names[cell_numeration[counter_var]:cell_numeration[counter_var + 1]])  # Original data files
+
+            # Save the dataset as a NetCDF file
+            # The file name includes both the experiment name and batch identifier
+            netcdf_name = os.path.join(str(parent_dir), f'{plot_name}_{batch_name.strip()}.nc')
+            ds.to_netcdf(netcdf_name)
+            print(f"NetCDF file saved: {netcdf_name}")
+
+        except Exception as e:
+            # Log any errors but continue processing other batches
+            print(f"Warning: Failed to create NetCDF for batch {batch_name}: {e}")
+            continue
+
     max_cycle_dis = specific_discharge_capacity.shape[0]
     max_cycle_ce = coulombic_efficiency.shape[0]
 
     # --- Plotting execution ---
+    # Store the original matplotlib settings
+    original_font_family = plt.rcParams['font.family']
+    
+    # Create custom font dictionaries
+    legend_font = {
+        'size': legend_font_size if legend_font_size else '12',
+        'family': legend_font_family if legend_font_family != "default" else None
+    }
+    
+    axis_label_font = {
+        'size': axis_label_font_size if axis_label_font_size else '13',
+        'family': axis_label_font_family if axis_label_font_family != "default" else None
+    }
+    
+    tick_label_font = {
+        'size': tick_label_font_size if tick_label_font_size else '12',
+        'family': tick_label_font_family if tick_label_font_family != "default" else None
+    }
+
     if ce_graph.lower() == 'yes':
         fig, axs = plt.subplots(nrows=2, ncols=1, gridspec_kw={'height_ratios': [1, 3]}, figsize=(7, 5))
+        
+        # Apply font settings to both axes
+        for ax in axs:
+            ax.tick_params(axis='both', which='major', labelsize=tick_label_font['size'])
+            if tick_label_font['family']:
+                for label in ax.get_xticklabels() + ax.get_yticklabels():
+                    label.set_family(tick_label_font['family'])
 
         # Individual cell plots for Capacity
         if plot_individual_cells.lower() == 'yes':
@@ -320,10 +497,10 @@ def run_plotting(data_path_str, dictionary_name_str, different_batches_str, numb
                             )
 
         # Apply capacity plot settings
-        axs[1].set_title(capacity_plot_title)
-        axs[1].set_xlabel('Cycle')
-        axs[1].set_ylabel(capacity_ylabel_text)
-        axs[1].legend(fontsize=12, loc=0)
+        axs[1].set_title(capacity_plot_title, fontsize=axis_label_font['size'], fontfamily=axis_label_font['family'])
+        axs[1].set_xlabel('Cycle', fontsize=axis_label_font['size'], fontfamily=axis_label_font['family'])
+        axs[1].set_ylabel(capacity_ylabel_text, fontsize=axis_label_font['size'], fontfamily=axis_label_font['family'])
+        axs[1].legend(fontsize=legend_font['size'], loc=0, prop={'family': legend_font['family']})
         axs[1].grid()
         if capacity_xmin is not None and capacity_xmax is not None:
             axs[1].set_xlim(capacity_xmin, capacity_xmax)
@@ -332,8 +509,8 @@ def run_plotting(data_path_str, dictionary_name_str, different_batches_str, numb
         #axs[1].autoscale(enable=True, axis='both', tight=True)
 
         # Apply CE plot settings
-        axs[0].set_title(ce_plot_title)
-        axs[0].set_ylabel(ce_ylabel_text)
+        axs[0].set_title(ce_plot_title, fontsize=axis_label_font['size'], fontfamily=axis_label_font['family'])
+        axs[0].set_ylabel(ce_ylabel_text, fontsize=axis_label_font['size'], fontfamily=axis_label_font['family'])
         axs[0].grid()
         axs[0].set_xticklabels([])
         if ce_xmin is not None and ce_xmax is not None:
@@ -344,8 +521,76 @@ def run_plotting(data_path_str, dictionary_name_str, different_batches_str, numb
 
         plt.tight_layout()
 
+        # Save figures and data before displaying (os._exit after show would prevent saving)
+        try:
+            plot_name = 'cap-vs-cycle_' + str(data_path.parts[-2])
+            parent_dir = Path(data_path).parent
+
+            plt.savefig(os.path.join(str(parent_dir), plot_name))
+            plt.savefig(os.path.join(str(parent_dir), str(f'{plot_name}.svg')))
+            plt.savefig(os.path.join(str(parent_dir), str(f'{plot_name}.pdf')))
+            pickle.dump(fig, open((os.path.join(str(parent_dir), plot_name) + '.pickle'), 'wb'))
+
+            save_file_name = os.path.join(str(parent_dir), str(f'{plot_name}.txt'))
+
+            df_to_save = pd.DataFrame({'Cycle': np.arange(1, max_len + 1)})
+
+            for counter_var in range(0, different_batches):
+                batch_name_part = data_file_names[cell_numeration[counter_var]]
+                df_to_save[f'{batch_name_part} mean discharge capacity'] = specific_discharge_capacity[
+                    f'{batch_name_part} mean discharge capacity']
+                df_to_save[f'{batch_name_part} stddev discharge capacity'] = specific_discharge_capacity[
+                    f'{batch_name_part} stddev discharge capacity']
+                df_to_save[f'{batch_name_part} mean charge capacity'] = specific_charge_capacity[
+                    f'{batch_name_part} mean charge capacity']
+                df_to_save[f'{batch_name_part} stddev charge capacity'] = specific_charge_capacity[
+                    f'{batch_name_part} stddev charge capacity']
+                df_to_save[f'{batch_name_part} mean CE'] = coulombic_efficiency[f'{batch_name_part} mean']
+                df_to_save[f'{batch_name_part} stddev CE'] = coulombic_efficiency[f'{batch_name_part} stddev']
+
+            df_to_save.to_csv(save_file_name, sep=',', index=False, na_rep='')
+            print(f"Data has been saved to {save_file_name}.")
+        except Exception as e:
+            messagebox.showerror("Error while Saving", f"An error occurred while saving the results: {e}")
+            return
+
         messagebox.showinfo("Success", "Plotting completed successfully. The graphs will now be displayed.")
         plt.show()
+        # Close only figure windows and return to the GUI. If user explicitly requests
+        # the app to close, perform a graceful quit/destroy.
+        try:
+            plt.close('all')
+        except Exception:
+            pass
+        if close_app_on_plot_close:
+            try:
+                app_obj = globals().get('app', None)
+                if app_obj is not None:
+                    try:
+                        app_obj.quit()
+                    except Exception:
+                        pass
+                    try:
+                        app_obj.destroy()
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        root = tk._default_root
+                        if root is not None:
+                            try:
+                                root.quit()
+                            except Exception:
+                                pass
+                            try:
+                                root.destroy()
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        return
 
     else:
         fig, ax = plt.subplots(nrows=1, ncols=1)
@@ -405,55 +650,94 @@ def run_plotting(data_path_str, dictionary_name_str, different_batches_str, numb
                             )
 
         # Apply capacity plot settings
-        ax.set_title(capacity_plot_title)
-        ax.set_xlabel('Cycle')
-        ax.set_ylabel(capacity_ylabel_text)
-        ax.legend(fontsize=11, loc=0)
+        ax.set_title(capacity_plot_title, fontsize=axis_label_font['size'], fontfamily=axis_label_font['family'])
+        ax.set_xlabel('Cycle', fontsize=axis_label_font['size'], fontfamily=axis_label_font['family'])
+        ax.set_ylabel(capacity_ylabel_text, fontsize=axis_label_font['size'], fontfamily=axis_label_font['family'])
+        ax.legend(fontsize=legend_font['size'], loc=0, prop={'family': legend_font['family']})
         ax.grid()
         if capacity_xmin is not None and capacity_xmax is not None:
             ax.set_xlim(capacity_xmin, capacity_xmax)
         if capacity_ymin is not None and capacity_ymax is not None:
             ax.set_ylim(capacity_ymin, capacity_ymax)
-        #ax.autoscale(enable=True, axis='both', tight=True)
+        
+        # Apply tick label font settings
+            ax.tick_params(axis='both', which='major', labelsize=tick_label_font['size'])
+            if tick_label_font['family']:
+                for label in ax.get_xticklabels() + ax.get_yticklabels():
+                    label.set_family(tick_label_font['family'])
+            #ax.autoscale(enable=True, axis='both', tight=True)        plt.tight_layout()
 
-        plt.tight_layout()
+        # Save figures and data before displaying (os._exit after show would prevent saving)
+        try:
+            plot_name = 'cap-vs-cycle_' + str(data_path.parts[-2])
+            parent_dir = Path(data_path).parent
+
+            plt.savefig(os.path.join(str(parent_dir), plot_name))
+            plt.savefig(os.path.join(str(parent_dir), str(f'{plot_name}.svg')))
+            plt.savefig(os.path.join(str(parent_dir), str(f'{plot_name}.pdf')))
+            pickle.dump(fig, open((os.path.join(str(parent_dir), plot_name) + '.pickle'), 'wb'))
+
+            save_file_name = os.path.join(str(parent_dir), str(f'{plot_name}.txt'))
+
+            df_to_save = pd.DataFrame({'Cycle': np.arange(1, max_len + 1)})
+
+            for counter_var in range(0, different_batches):
+                batch_name_part = data_file_names[cell_numeration[counter_var]]
+                df_to_save[f'{batch_name_part} mean discharge capacity'] = specific_discharge_capacity[
+                    f'{batch_name_part} mean discharge capacity']
+                df_to_save[f'{batch_name_part} stddev discharge capacity'] = specific_discharge_capacity[
+                    f'{batch_name_part} stddev discharge capacity']
+                df_to_save[f'{batch_name_part} mean charge capacity'] = specific_charge_capacity[
+                    f'{batch_name_part} mean charge capacity']
+                df_to_save[f'{batch_name_part} stddev charge capacity'] = specific_charge_capacity[
+                    f'{batch_name_part} stddev charge capacity']
+                df_to_save[f'{batch_name_part} mean CE'] = coulombic_efficiency[f'{batch_name_part} mean']
+                df_to_save[f'{batch_name_part} stddev CE'] = coulombic_efficiency[f'{batch_name_part} stddev']
+
+            df_to_save.to_csv(save_file_name, sep=',', index=False, na_rep='')
+            print(f"Data has been saved to {save_file_name}.")
+        except Exception as e:
+            messagebox.showerror("Error while Saving", f"An error occurred while saving the results: {e}")
+            return
+
         messagebox.showinfo("Success", "Plotting completed successfully. The graphs will now be displayed.")
         plt.show()
-
-    # Save Figures and Data (as in original script, but now in the function)
-    try:
-        #plot_name = Path(data_path).parts[-1]
-        plot_name = 'cap-vs-cycle_' + str(data_path.parts[-2])
-        parent_dir = Path(data_path).parent
-
-        plt.savefig(os.path.join(str(parent_dir), plot_name))
-        plt.savefig(os.path.join(str(parent_dir), str(f'{plot_name}.svg')))
-        plt.savefig(os.path.join(str(parent_dir), str(f'{plot_name}.pdf')))
-        pickle.dump(fig, open((os.path.join(str(parent_dir), plot_name) + '.pickle'), 'wb'))
-
-        save_file_name = os.path.join(str(parent_dir), str(f'{plot_name}.txt'))
-
-        df_to_save = pd.DataFrame({'Cycle': np.arange(1, max_len + 1)})
-
-        for counter_var in range(0, different_batches):
-            batch_name_part = data_file_names[cell_numeration[counter_var]]
-            df_to_save[f'{batch_name_part} mean discharge capacity'] = specific_discharge_capacity[
-                f'{batch_name_part} mean discharge capacity']
-            df_to_save[f'{batch_name_part} stddev discharge capacity'] = specific_discharge_capacity[
-                f'{batch_name_part} stddev discharge capacity']
-            df_to_save[f'{batch_name_part} mean charge capacity'] = specific_charge_capacity[
-                f'{batch_name_part} mean charge capacity']
-            df_to_save[f'{batch_name_part} stddev charge capacity'] = specific_charge_capacity[
-                f'{batch_name_part} stddev charge capacity']
-            df_to_save[f'{batch_name_part} mean CE'] = coulombic_efficiency[f'{batch_name_part} mean']
-            df_to_save[f'{batch_name_part} stddev CE'] = coulombic_efficiency[f'{batch_name_part} stddev']
-
-        df_to_save.to_csv(save_file_name, sep=',', index=False, na_rep='')
-        print(f"Data has been saved to {save_file_name}.")
-
-    except Exception as e:
-        messagebox.showerror("Error while Saving", f"An error occurred while saving the results: {e}")
+        # Graceful cleanup: close figures and attempt to quit/destroy the Tk root, then return
+        try:
+            plt.close('all')
+        except Exception:
+            pass
+        if close_app_on_plot_close:
+            try:
+                app_obj = globals().get('app', None)
+                if app_obj is not None:
+                    try:
+                        app_obj.quit()
+                    except Exception:
+                        pass
+                    try:
+                        app_obj.destroy()
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        root = tk._default_root
+                        if root is not None:
+                            try:
+                                root.quit()
+                            except Exception:
+                                pass
+                            try:
+                                root.destroy()
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+            except Exception:
+                pass
         return
+
+    # Saving is handled before displaying the plots so the process can exit cleanly afterwards.
 
 
 # --- GUI Application Class ---
@@ -495,7 +779,6 @@ class PlottingGUI(tk.Tk):
         self.main_frame = tk.Frame(self.notebook, padx=10, pady=10)
         self.notebook.add(self.main_frame, text="Main Settings")
         self.create_main_inputs(self.main_frame)
-
         # Tab 2: Plot Customization
         self.plot_frame = tk.Frame(self.notebook, padx=10, pady=10)
         self.notebook.add(self.plot_frame, text="Plot Customization")
@@ -563,8 +846,82 @@ class PlottingGUI(tk.Tk):
                                                                                                    padx=40, sticky="w")
 
     def create_plot_customization(self, frame):
+        # Store default matplotlib font family for later use
+        self.default_font_family = plt.rcParams['font.family']
+        
+        # Create a canvas with scrollbar
+        canvas = tk.Canvas(frame)
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(
+                scrollregion=canvas.bbox("all")
+            )
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Font Settings Section
+        tk.Label(scrollable_frame, text="Font Settings", font=("Arial", 12, "bold")).pack(fill='x', pady=(10, 5))
+        
+        # Create frame for font settings
+        font_frame = ttk.LabelFrame(scrollable_frame, text="Font Customization", padding=(5, 5, 5, 5))
+        font_frame.pack(fill='x', pady=5, padx=5)
+
+        # Legend Font Settings
+        legend_frame = ttk.LabelFrame(font_frame, text="Legend Font", padding=(5, 5, 5, 5))
+        legend_frame.pack(fill='x', pady=2)
+        
+        tk.Label(legend_frame, text="Font Size:").pack(side='left', padx=5)
+        self.legend_font_size = tk.Entry(legend_frame, width=5)
+        self.legend_font_size.pack(side='left', padx=5)
+        self.legend_font_size.insert(0, "12")  # Default size
+        
+        tk.Label(legend_frame, text="Font Family:").pack(side='left', padx=5)
+        self.legend_font_family = ttk.Combobox(legend_frame, width=15)
+        self.legend_font_family['values'] = ['default'] + sorted(font_manager.get_font_names())
+        self.legend_font_family.pack(side='left', padx=5)
+        self.legend_font_family.set('default')
+
+        # Axis Labels Font Settings
+        axis_labels_frame = ttk.LabelFrame(font_frame, text="Axis Labels Font", padding=(5, 5, 5, 5))
+        axis_labels_frame.pack(fill='x', pady=2)
+        
+        tk.Label(axis_labels_frame, text="Font Size:").pack(side='left', padx=5)
+        self.axis_label_font_size = tk.Entry(axis_labels_frame, width=5)
+        self.axis_label_font_size.pack(side='left', padx=5)
+        self.axis_label_font_size.insert(0, "13")  # Default size
+        
+        tk.Label(axis_labels_frame, text="Font Family:").pack(side='left', padx=5)
+        self.axis_label_font_family = ttk.Combobox(axis_labels_frame, width=15)
+        self.axis_label_font_family['values'] = ['default'] + sorted(font_manager.get_font_names())
+        self.axis_label_font_family.pack(side='left', padx=5)
+        self.axis_label_font_family.set('default')
+
+        # Tick Labels Font Settings
+        tick_labels_frame = ttk.LabelFrame(font_frame, text="Tick Labels Font", padding=(5, 5, 5, 5))
+        tick_labels_frame.pack(fill='x', pady=2)
+        
+        tk.Label(tick_labels_frame, text="Font Size:").pack(side='left', padx=5)
+        self.tick_label_font_size = tk.Entry(tick_labels_frame, width=5)
+        self.tick_label_font_size.pack(side='left', padx=5)
+        self.tick_label_font_size.insert(0, "12")  # Default size
+        
+        tk.Label(tick_labels_frame, text="Font Family:").pack(side='left', padx=5)
+        self.tick_label_font_family = ttk.Combobox(tick_labels_frame, width=15)
+        self.tick_label_font_family['values'] = ['default'] + sorted(font_manager.get_font_names())
+        self.tick_label_font_family.pack(side='left', padx=5)
+        self.tick_label_font_family.set('default')
+
         # General Plot Settings
-        tk.Label(frame, text="General Plot Settings", font=("Arial", 12, "bold")).pack(fill='x', pady=(10, 5))
+        tk.Label(scrollable_frame, text="General Plot Settings", font=("Arial", 12, "bold")).pack(fill='x', pady=(10, 5))
+        
+        # Pack the canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
         tk.Label(frame, text="Color List (comma-separated):", anchor="w").pack(fill='x', pady=(5, 0))
         self.color_text = tk.Text(frame, height=4, width=80)
@@ -714,6 +1071,13 @@ class PlottingGUI(tk.Tk):
             "different_batches": self.entries["Number of Batches:"].get(),
             "number_of_cells": self.entries["Cells per Batch (comma-separated):"].get(),
             "ce_graph": self.ce_graph_var.get(),
+            # Font settings
+            "legend_font_size": self.legend_font_size.get(),
+            "legend_font_family": self.legend_font_family.get(),
+            "axis_label_font_size": self.axis_label_font_size.get(),
+            "axis_label_font_family": self.axis_label_font_family.get(),
+            "tick_label_font_size": self.tick_label_font_size.get(),
+            "tick_label_font_family": self.tick_label_font_family.get(),
             "capacity_plot_mode": self.capacity_plot_mode_var.get(),
             "first_cycle_discharge_only": self.first_cycle_discharge_var.get(),
             "plot_individual_cells": self.plot_individual_cells_var.get(),
@@ -741,6 +1105,9 @@ class PlottingGUI(tk.Tk):
             self.status_label.config(text=f"Error saving settings: {e}")
 
     def load_settings(self):
+        # Ensure matplotlib is using its default font family
+        plt.rcParams['font.family'] = plt.rcParamsDefault['font.family']
+        
         if not Path(self.settings_file).is_file():
             self.status_label.config(text="No saved settings found.")
             return
@@ -748,6 +1115,19 @@ class PlottingGUI(tk.Tk):
         try:
             with open(self.settings_file, 'rb') as f:
                 settings = pickle.load(f)
+
+            # Load font settings
+            self.legend_font_size.delete(0, tk.END)
+            self.legend_font_size.insert(0, settings.get("legend_font_size", "12"))
+            self.legend_font_family.set(settings.get("legend_font_family", "default"))
+            
+            self.axis_label_font_size.delete(0, tk.END)
+            self.axis_label_font_size.insert(0, settings.get("axis_label_font_size", "13"))
+            self.axis_label_font_family.set(settings.get("axis_label_font_family", "default"))
+            
+            self.tick_label_font_size.delete(0, tk.END)
+            self.tick_label_font_size.insert(0, settings.get("tick_label_font_size", "12"))
+            self.tick_label_font_family.set(settings.get("tick_label_font_family", "default"))
 
             self.entries["Data Directory:"].delete(0, tk.END)
             self.entries["Data Directory:"].insert(0, settings.get("data_path", ""))
@@ -802,6 +1182,9 @@ class PlottingGUI(tk.Tk):
             self.status_label.config(text=f"Error loading settings: {e}")
 
     def on_run_click(self):
+        # Store default matplotlib settings
+        original_font_family = plt.rcParams['font.family']
+        
         # Save settings before running the plot
         self.save_settings()
 
@@ -830,12 +1213,27 @@ class PlottingGUI(tk.Tk):
         ce_ymin_str = self.ce_ymin_entry.get()
         ce_ymax_str = self.ce_ymax_entry.get()
 
+        # Get font settings
+        legend_font_size = self.legend_font_size.get()
+        legend_font_family = self.legend_font_family.get()
+        axis_label_font_size = self.axis_label_font_size.get()
+        axis_label_font_family = self.axis_label_font_family.get()
+        tick_label_font_size = self.tick_label_font_size.get()
+        tick_label_font_family = self.tick_label_font_family.get()
+
         run_plotting(data_path_str, dictionary_name_str, different_batches_str, number_of_cells_str,
                      ce_graph_str, capacity_plot_mode_str, first_cycle_discharge_only_str, plot_individual_cells_str,
                      color_list_str, marker_list_str, capacity_plot_title_str, capacity_ylabel_text_str,
                      capacity_xmin_str, capacity_xmax_str, capacity_ymin_str, capacity_ymax_str,
                      ce_plot_title_str, ce_ylabel_text_str, ce_xmin_str, ce_xmax_str, ce_ymin_str, ce_ymax_str,
-                     individual_cell_legend_suffix_str)
+                     individual_cell_legend_suffix_str,
+                     legend_font_size=legend_font_size,
+                     legend_font_family=legend_font_family,
+                     axis_label_font_size=axis_label_font_size,
+                     axis_label_font_family=axis_label_font_family,
+                     tick_label_font_size=tick_label_font_size,
+                     tick_label_font_family=tick_label_font_family,
+                     close_app_on_plot_close=False)
 
 
 if __name__ == '__main__':
