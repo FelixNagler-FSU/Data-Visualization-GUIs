@@ -1,0 +1,36 @@
+from datetime import datetime, timedelta
+from pandas import Series
+
+start_time = datetime(year=2020, month=12, day=31, hour=0)
+air_temperature = [
+    5.0, 5.6, 5.6, 5.6, 5.6, 6.1, 6.7, 7.2,
+    7.8, 8.3, 8.3, 8.9, 7.8, 7.2, 7.2, 7.2,
+    6.7, 6.7, 6.7, 6.7, 6.1, 5.6, 5.0, 5.0
+]
+
+hours = [
+    start_time + timedelta(hours=offset) 
+    for offset in range(len(air_temperature))
+] 
+
+measurements = Series(
+    name="Air Temperature [°C]",
+    data = air_temperature,
+    index = hours
+)
+print("=== Statistics ===")
+print(measurements.describe())
+
+
+measurements_fahrenheit = measurements * 9/5 + 32
+measurements_fahrenheit.name = "Air Temperature [°F]"
+print("\n=== Converted to Fahrenheit ===")
+print(measurements_fahrenheit)
+
+day_start = datetime(year=2020, month=12, day=31, hour=7)
+noon = datetime(year=2020, month=12, day=31, hour=12)
+day_end = datetime(year=2020, month=12, day=31, hour=17)
+
+print("Temperature at noon:", measurements[noon])
+print("=== Daytime Temperatures ===")
+print(measurements[day_start:day_end])

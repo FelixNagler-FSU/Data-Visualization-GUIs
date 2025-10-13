@@ -1,0 +1,71 @@
+from matplotlib import pyplot
+from datetime import datetime, timedelta
+
+# Measured air temperature in °C
+# Central Park, New York, US 
+# 2020-12-31, 00:00 - 23:00
+
+start_time = datetime(year=2020, month=12, day=31, hour=0, minute=0)
+
+end_time = datetime(year=2020, month=12, day=31, hour=23, minute=0)
+
+air_temperature = [
+    5.0, 5.6, 5.6, 5.6, 5.6, 6.1, 6.7, 7.2,
+    7.8, 8.3, 8.3, 8.9, 7.8, 7.2, 7.2, 7.2,
+    6.7, 6.7, 6.7, 6.7, 6.1, 5.6, 5.0, 5.0
+] 
+
+minimum_temperature = min(air_temperature)
+average_temperature = sum(air_temperature) / len(air_temperature)
+
+hours = [
+    start_time + timedelta(hours=offsset)
+    for offsset in range(len(air_temperature))
+]
+
+day_start = 7   # Index in hours when the sun rises
+day_end = 17    # Index in hours when the sun sets
+
+daytime = hours[day_start:day_end+1]
+daytime_temperature = air_temperature[day_start:day_end+1]
+
+displayed_hours = hours[::2]  # display every second hour
+displayed_labels = [
+    hour.strftime("%H:%M")
+    for hour in displayed_hours
+]
+
+pyplot.title("Central Park, New York, US")
+pyplot.xlabel("Local Time")
+pyplot.ylabel("Air Temperature [°C]")
+pyplot.xticks(
+    ticks=displayed_hours,
+    labels=displayed_labels, 
+    rotation=45,
+    horizontalalignment='right' # -> from text properties
+    )
+
+pyplot.plot(hours, air_temperature)
+
+#pyplot.ylim(bottom=0, top=10)
+pyplot.axhline(y=average_temperature, linestyle='dashed', color='lightgray')
+pyplot.axhline(y=minimum_temperature, linestyle='solid', color='lightgray')
+
+
+pyplot.fill_between(
+    x=hours,
+    y1=air_temperature,
+    y2=minimum_temperature,
+    color='lightsteelblue'
+)
+
+pyplot.fill_between(
+    x=daytime,
+    y1=daytime_temperature,
+    y2=minimum_temperature,
+    color='lightyellow'
+)
+
+
+
+pyplot.show() # <- Finish creating the plot AND forget everything about it

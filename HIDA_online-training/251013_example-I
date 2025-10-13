@@ -1,0 +1,48 @@
+from random import random
+from datetime import datetime, timedelta
+from matplotlib import pyplot
+from pandas import Series
+
+# Initial parameters
+value_count = 365                 # How many days to predict
+start_day = datetime(2020, 1, 1)  # Start day of the prediction
+price = 50 * (1 + random())       # Initial share price
+
+# Prediction data
+share_prices = [
+    price := price - 0.05 + random() / 10
+    for _ in range(value_count)
+]
+
+average_price = sum(share_prices) / len(share_prices)
+max_price = max(share_prices)
+min_price = min(share_prices)
+# Dates assiciated with the data
+days = [
+    start_day + timedelta(days=current_value)
+    for current_value in range(value_count)
+]
+
+min_idx = share_prices.index(min_price)
+max_idx = share_prices.index(max_price)
+start_idx= min_idx if min_idx <= max_idx else max_idx
+end_idx = max_idx if min_idx <= max_idx else min_idx
+x_min_max = days[start_idx:end_idx + 1]
+y_min_max = share_prices[start_idx:end_idx + 1]
+
+
+pyplot.plot(days, share_prices)
+pyplot.xlabel("Trade day")
+pyplot.ylabel("Share price in €")
+pyplot.title("Profit Inc. Share Price (predicted)")
+pyplot.axhline(y=average_price, linestyle='dashed', color='lightgray')
+pyplot.vlines(x=days[min_idx], ymin=average_price, ymax=min_price, colors='red', linestyles='solid')
+pyplot.vlines(x=days[max_idx], ymin=average_price, ymax=max_price, colors='green', linestyles='solid')
+pyplot.fill_between(
+    x=x_min_max,
+    y1=y_min_max,
+    y2=average_price,
+    #where=[price >= average_price for price in y_min_max],
+    color='lightgray'
+)
+pyplot.show()

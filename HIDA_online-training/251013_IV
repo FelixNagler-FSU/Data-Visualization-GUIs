@@ -1,0 +1,24 @@
+from pandas import read_csv
+from pathlib import Path
+from matplotlib import pyplot
+
+# Path to the CSV file
+data_file = Path("water_levels.csv")
+
+print("Try to load file:", data_file.absolute())
+
+water_level_data = read_csv(data_file, header=None, parse_dates=[0])
+
+#Set the column names
+LABEL_WATER_LEVEL = "Water Level [m]"
+LABEL_DATETIME = "Date and Time"
+water_level_data.columns = [LABEL_DATETIME, LABEL_WATER_LEVEL]
+
+# Set the index
+water_level_data.set_index(LABEL_DATETIME, inplace=True)
+
+#pyplot.plot(water_level_data.index, water_level_data[LABEL_WATER_LEVEL])
+water_level_data.plot(y=LABEL_WATER_LEVEL)
+pyplot.show()
+
+print(water_level_data)

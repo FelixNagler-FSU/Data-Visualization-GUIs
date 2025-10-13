@@ -1,0 +1,55 @@
+import pandas
+
+
+
+# Coffee consumption - February 2024
+coffee_consumption = {
+    "Christian": 10,
+    "David": 17,
+    "Fredo": 22,
+    "Julia": 2,
+    "Lokamani": 18,
+    "Nina": 3,
+    "Norman": 1,
+    "Oliver": 24,
+    "Tobias": 14,
+    "Uwe": 6
+}
+
+# Account balance end of 2024-01
+balance = {
+    "Christian": 9.25,
+    "David": 3.00,
+    "Fredo": -4.50,
+    "Julia": 22.75,
+    "Lokamani": 10.50,
+    "Nina": -0.25,
+    "Oliver": 50.00,
+    "Tobias": 9.75,
+    "Uwe": 4.50
+}
+
+series_coffee = pandas.Series(coffee_consumption, name="Coffee 2024-02")
+series_balance = pandas.Series(balance, name="Balance 2024-01")
+
+for person in series_coffee.index:
+    if not person in series_balance.index:
+        series_balance[person] = 0.0
+
+max_coffee = series_coffee.max()
+max_coffee_consumer = series_coffee.idxmax()
+
+Oliver_payment = 24.98
+Coffee_breackeven_price = Oliver_payment / series_coffee.sum()
+
+coffee_price = 0.35
+series_debt = pandas.Series(data=series_coffee * coffee_price, name="Debt 2024-02")
+
+new_balance = series_balance - series_debt
+series_balance = pandas.Series(data=new_balance, name="Balance 2024-02")
+
+print(series_coffee)
+print(f"Max coffee consumer: {max_coffee_consumer} with {max_coffee} cups")
+print(f"Oliver breakeven price per cup: {Coffee_breackeven_price} EUR")
+print(series_debt)
+print(series_balance)

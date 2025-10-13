@@ -623,6 +623,12 @@ class VoltVsCapGUI(tk.Tk):
             offvalue=False
         )
         self.first_cycle_discharge_only_checkbox.grid(row=3, column=0, columnspan=3, sticky="w", pady=10)
+        
+        # --- TAB BUTTONS: ensure controls are available on small screens ---
+        btn_frame = tk.Frame(frame)
+        btn_frame.grid(row=30, column=0, columnspan=3, pady=8, sticky="w")
+        tk.Button(btn_frame, text="Restore Last Settings", command=self.load_settings, font=("Arial", 10)).pack(side='left', padx=5)
+        tk.Button(btn_frame, text="Run Plotting", command=self.on_run_click, font=("Arial", 10, "bold"), bg="lightblue").pack(side='left', padx=5)
 
     def create_plot_customization(self, frame):
         """Creates widgets for customizing the plot's appearance."""
@@ -679,6 +685,12 @@ class VoltVsCapGUI(tk.Tk):
         self.ymax_entry = tk.Entry(ylim_frame, width=10)
         self.ymax_entry.pack(side='left', padx=5)
 
+        # --- TAB BUTTONS: ensure controls are available on small screens ---
+        plot_tab_btn_frame = tk.Frame(frame)
+        plot_tab_btn_frame.pack(fill='x', pady=(8, 4))
+        tk.Button(plot_tab_btn_frame, text="Restore Last Settings", command=self.load_settings, font=("Arial", 10)).pack(side='left', padx=5)
+        tk.Button(plot_tab_btn_frame, text="Run Plotting", command=self.on_run_click, font=("Arial", 10, "bold"), bg="lightblue").pack(side='left', padx=5)
+
         # Font settings
         tk.Label(frame, text="Font Settings", font=("Arial", 12, "bold")).pack(fill='x', pady=(20, 5))
         
@@ -730,6 +742,12 @@ class VoltVsCapGUI(tk.Tk):
         tk.Button(dict_button_frame, text="Load Dictionary", command=self.load_dictionary).pack(side='left', padx=5)
         tk.Button(dict_button_frame, text="Save Dictionary", command=self.save_dictionary).pack(side='left', padx=5)
         self.load_dictionary()
+
+        # --- TAB BUTTONS: ensure controls are available on small screens ---
+        dict_tab_btn_frame = tk.Frame(frame)
+        dict_tab_btn_frame.pack(pady=5)
+        tk.Button(dict_tab_btn_frame, text="Restore Last Settings", command=self.load_settings, font=("Arial", 10)).pack(side='left', padx=5)
+        tk.Button(dict_tab_btn_frame, text="Run Plotting", command=self.on_run_click, font=("Arial", 10, "bold"), bg="lightblue").pack(side='left', padx=5)
 
     def browse_data_path(self):
         """Opens a file dialog for the user to select the data directory."""
