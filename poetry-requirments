@@ -1,2 +1,0 @@
-import pip as pip
-pip.main(['freeze', '>', 'requirements.txt'])
