@@ -9,6 +9,9 @@ import os
 import ast
 import matplotlib.font_manager as font_manager
 import pickle
+import zipfile
+import xarray as xr
+import shutil
 
 # Use TkAgg backend to integrate with the tkinter GUI
 # This is required to show the matplotlib plot within a tkinter application.
@@ -21,7 +24,8 @@ import matplotlib.colors as mcolors
 # --- Refactored plotting logic into a function ---
 def run_plotting(data_path_str, dictionary_name_str, cycle_numbers_str, plot_title_str, xlabel_text_str,
                  ylabel_text_str,
-                 color_list_str, alpha_list_str, xmin_str, xmax_str, ymin_str, ymax_str, first_cycle_discharge_only):
+                 color_list_str, alpha_list_str, xmin_str, xmax_str, ymin_str, ymax_str, first_cycle_discharge_only,
+                 close_app_on_plot_close=False):
     """
     This function contains the core plotting logic, refactored to accept user inputs from the GUI.
     It processes battery cycling data, calculates specific capacities, and generates a
@@ -77,9 +81,6 @@ def run_plotting(data_path_str, dictionary_name_str, cycle_numbers_str, plot_tit
     # List all data files in the specified directory
     data_file_names = os.listdir(data_path)
 
-    # Set default font size for the plot
-    plt.rcParams.update({'font.size': 13})
-
     # Initialize dictionaries to store processed data and active material weights
     max_rows = 0
     all_data = {cycle: {} for cycle in cycle_numbers}
@@ -89,74 +90,109 @@ def run_plotting(data_path_str, dictionary_name_str, cycle_numbers_str, plot_tit
     for idx, filename in enumerate(data_file_names):
         file_path = data_path / filename
 
-        header_line_number = None
-        # Attempt to read the header and find active mass
-        try:
-            with open(file_path, "r", encoding="cp1252") as f:
-                lines = f.readlines()
-                for i, line in enumerate(lines):
-                    # Find the header row by searching for a specific keyword
-                    if "mode	ox/red	error" in line.strip():
-                        header_line_number = i - 3
-                    # Find and parse the "mass of active material" from the file header
-                    if "mass of active material" in line.lower():
+        df = None
+        suffix = Path(filename).suffix.lower()
+
+        # Try .mpr via yadg first
+        if suffix == '.mpr':
+            try:
+                import yadg
+                import json
+            except Exception:
+                print(f"yadg not available — falling back to header parsing for {filename}.")
+            else:
+                try:
+                    ds_raw = yadg.extractors.extract(filetype='eclab.mpr', path=str(file_path))
+                except Exception as e:
+                    print(f"Warning: yadg failed to parse {filename}: {e}. Falling back to header parsing.")
+                else:
+                    # Extract active material mass from original_metadata if present
+                    mass_g = None
+                    try:
+                        orig = getattr(ds_raw, 'attrs', {}).get('original_metadata', None)
+                        if orig is None and 'original_metadata' in ds_raw:
+                            orig = ds_raw['original_metadata']
+                        if isinstance(orig, (bytes, str)):
+                            try:
+                                orig = json.loads(orig)
+                            except Exception:
+                                try:
+                                    orig = ast.literal_eval(orig)
+                                except Exception:
+                                    orig = None
+
+                        def _find_key(d, key):
+                            if isinstance(d, dict):
+                                if key in d:
+                                    return d[key]
+                                for v in d.values():
+                                    res = _find_key(v, key)
+                                    if res is not None:
+                                        return res
+                            return None
+
+                        found = None
+                        if isinstance(orig, dict) and 'settings' in orig and 'active_material_mass' in orig['settings']:
+                            found = orig['settings']['active_material_mass']
+                        if found is None:
+                            found = _find_key(orig, 'active_material_mass')
+                        if found is not None:
+                            mg = float(found)
+                            mass_g = mg / 1000.0
+                            weight_dict[filename] = mass_g
+                            print(f"Active mass for {filename}: {mg} mg")
+                    except Exception as e:
+                        print(f"Warning: error reading metadata for {filename}: {e}")
+
+                    if mass_g is None:
+                        print(f"Warning: No active material mass found in {filename}. Skipping file.")
+                    else:
+                        # Convert datatree -> xarray Dataset if needed
                         try:
-                            parts = line.split(":")
-                            number_str = parts[1].strip().split(' ')[0]
-                            # Convert mass to grams and store it
-                            number_float = float(number_str.replace(',', '.')) / 1000
-                            weight_dict[filename] = number_float
-                            print(f"Active mass for {filename}: {number_float * 1000} mg")
-                        except (IndexError, ValueError):
-                            print(f"Warning: Could not read active mass in {filename}. Skipping file.")
-                            break
-                if filename not in weight_dict:
-                    print(f"Warning: No active mass found in header for {filename}. Skipping file.")
-                    continue
-        except (IOError, IndexError, ValueError):
-            print(f"Warning: Could not find header row or active mass in {filename}. Skipping file.")
+                            if hasattr(ds_raw, 'to_dataset'):
+                                ds = ds_raw.to_dataset()
+                            elif hasattr(ds_raw, 'to_xarray'):
+                                ds = ds_raw.to_xarray()
+                            else:
+                                if hasattr(ds_raw, 'get') and ds_raw.get('/') is not None:
+                                    ds = ds_raw.get('/').to_dataset()
+                                else:
+                                    ds = ds_raw
+                        except Exception:
+                            ds = ds_raw
+
+                        # Find Q (per-sample capacity-like) and Ewe (voltage) and half-cycle
+                        keys = list(ds.keys()) if hasattr(ds, 'keys') else list(getattr(ds, 'data_vars', {}))
+                        q_var = next((k for k in keys if 'Q charge or discharge' in k or 'Q charge/discharge' in k or 'Q' == k), None)
+                        e_var = next((k for k in keys if any(sub in k for sub in ('Ewe', 'Ecell', 'Ecell/V', 'Ewe/V'))), None)
+                        half_var = next((k for k in keys if any(sub in k for sub in ('half cycle', 'Half_cycle', 'Half cycle', 'half_cycle'))), None)
+
+                        if q_var is None or e_var is None or half_var is None:
+                            print(f"Warning: Could not find Q/Ewe/Half_cycle variables in {filename}. Skipping.")
+                        else:
+                            try:
+                                q_arr = np.asarray(ds[q_var].values) if hasattr(ds[q_var], 'values') else np.asarray(ds[q_var])
+                                e_arr = np.asarray(ds[e_var].values) if hasattr(ds[e_var], 'values') else np.asarray(ds[e_var])
+                                half_arr = np.asarray(ds[half_var].values) if hasattr(ds[half_var], 'values') else np.asarray(ds[half_var])
+
+                                df = pd.DataFrame({'Q': q_arr, 'Ewe': e_arr, 'Half_cycle': half_arr})
+                            except Exception as e:
+                                print(f"Warning: error creating DataFrame from {filename}: {e}. Skipping.")
+
+        # We only process .mpr files now
+        if df is None:
+            print(f"Skipping non-mpr file or parsing failed: {filename}")
             continue
 
-        if header_line_number is None:
-            print(f"Warning: Header row 'mode ox/red error' not found in {filename}. Skipping file.")
+        # Ensure we have the required columns
+        if 'Half_cycle' not in df.columns:
+            print(f"Skipping {filename}: Half_cycle column not found after parsing.")
             continue
 
-        # Read the data file into a pandas DataFrame
-        try:
-            df = pd.read_table(
-                filepath_or_buffer=file_path,
-                sep='\t',
-                header=header_line_number,
-                decimal=',',
-                encoding='cp1252'
-            )
-        except Exception as e:
-            print(f"Error reading file {filename}: {e}. Skipping.")
-            continue
-
-        # Clean column names by removing leading/trailing whitespace
-        df.columns = df.columns.str.strip()
-
-        # Rename essential columns for consistency
-        try:
-            potential_ecell_cols = [col for col in df.columns if 'Ecell/V' in col or 'Ewe/V' in col]
-            if not potential_ecell_cols:
-                raise KeyError("Ecell-column not found")
-            df.rename(columns={potential_ecell_cols[0]: 'Ecell'}, inplace=True)
-
-            potential_capacity_cols = [col for col in df.columns if 'Capacity/mA.h' in col]
-            if not potential_capacity_cols:
-                raise KeyError("Capacity-column not found")
-            df.rename(columns={potential_capacity_cols[0]: 'Capacity'}, inplace=True)
-
-            potential_half_cycle_cols = [col for col in df.columns if 'half cycle' in col]
-            if not potential_half_cycle_cols:
-                raise KeyError("half cycle-column not found")
-            df.rename(columns={potential_half_cycle_cols[0]: 'Half_cycle'}, inplace=True)
-
-        except KeyError as e:
-            print(f"Error finding columns in {filename}: {e}. Skipping file.")
-            continue
+        if 'Ewe' not in df.columns and 'Ecell' in df.columns:
+            df.rename(columns={'Ecell': 'Ewe'}, inplace=True)
+        if 'Q' not in df.columns and 'Capacity' in df.columns:
+            df.rename(columns={'Capacity': 'Q'}, inplace=True)
 
         if df.shape[0] > max_rows:
             max_rows = df.shape[0]
@@ -165,38 +201,63 @@ def run_plotting(data_path_str, dictionary_name_str, cycle_numbers_str, plot_tit
         grouped = df.groupby('Half_cycle')
         temp_data_dict = {}
 
+        # Determine mass (weight) for normalization; default to 1 if unknown
+        weight = weight_dict.get(filename, None)
+        if weight is None:
+            weight = 1.0
+
         for half_cycle_value, group in grouped:
-            if not group.empty:
+            if group.empty:
+                continue
 
-                # Logic to determine charge/discharge and assign cycle number
-                is_charge = False  # Default to discharge
-                if first_cycle_discharge_only:
-                    if half_cycle_value == 0:
-                        cycle_num = 1
-                    else:
-                        cycle_num = (half_cycle_value - 2) // 2 + 2
-                        is_charge = (half_cycle_value % 2 == 0)
+            # Logic to determine charge/discharge and assign cycle number
+            try:
+                h_val = int(half_cycle_value)
+            except Exception:
+                # sometimes half-cycle is string; try to cast
+                try:
+                    h_val = int(float(half_cycle_value))
+                except Exception:
+                    continue
+
+            is_charge = False
+            if first_cycle_discharge_only:
+                if h_val == 0:
+                    cycle_num = 1
+                    is_charge = False
                 else:
-                    cycle_num = half_cycle_value // 2 + 1
-                    is_charge = (half_cycle_value % 2 == 0)
+                    cycle_num = (h_val - 2) // 2 + 2
+                    is_charge = (h_val % 2 == 0)
+            else:
+                cycle_num = h_val // 2 + 1
+                is_charge = (h_val % 2 == 0)
 
-                # Assign column names based on cycle type (charge/discharge)
-                if is_charge:
-                    volt_col = f'chVolt{cycle_num}'
-                    cap_col = f'chCap{cycle_num}'
-                else:
-                    volt_col = f'disVolt{cycle_num}'
-                    cap_col = f'disCap{cycle_num}'
+            if is_charge:
+                volt_col = f'chVolt{cycle_num}'
+                cap_col = f'chCap{cycle_num}'
+            else:
+                volt_col = f'disVolt{cycle_num}'
+                cap_col = f'disCap{cycle_num}'
 
-                # Store the data in a temporary dictionary
-                temp_data_dict[volt_col] = group['Ecell'].reset_index(drop=True)
-                temp_data_dict[cap_col] = group['Capacity'].reset_index(drop=True)
+            # For .mpr we used 'Q' and 'Ewe'; for legacy header we may have had 'Capacity' and 'Ewe'
+            volt_series = group.get('Ewe') if 'Ewe' in group else group.get('Ecell')
+            cap_series = group.get('Q') if 'Q' in group else group.get('Capacity') if 'Capacity' in group else None
+
+            if volt_series is None or cap_series is None:
+                # skip this half if necessary data missing
+                continue
+
+            # Normalize capacity by active material weight (mass in g). If mass was not found, weight==1.
+            try:
+                cap_norm = cap_series.reset_index(drop=True).astype(float) / float(weight)
+            except Exception:
+                cap_norm = cap_series.reset_index(drop=True)
+
+            temp_data_dict[volt_col] = volt_series.reset_index(drop=True)
+            temp_data_dict[cap_col] = cap_norm
 
         # Create a DataFrame from the processed cycle data
         cycle_separated_df = pd.DataFrame(temp_data_dict)
-
-        # Get the weight for specific capacity calculation
-        weight = weight_dict.get(filename, 1)
 
         # Populate the main data dictionary for plotting
         for cycle in cycle_numbers:
@@ -206,12 +267,12 @@ def run_plotting(data_path_str, dictionary_name_str, cycle_numbers_str, plot_tit
             disVolt_col = f'disVolt{cycle}'
 
             if chCap_col in cycle_separated_df.columns and chVolt_col in cycle_separated_df.columns:
-                # Normalize capacity by active material weight
-                all_data[cycle][f'{filename}_ch_cap'] = cycle_separated_df[chCap_col] / weight
+                all_data[cycle][f'{filename}_ch_cap'] = cycle_separated_df[chCap_col]
                 all_data[cycle][f'{filename}_ch_volt'] = cycle_separated_df[chVolt_col]
 
             if disCap_col in cycle_separated_df.columns and disVolt_col in cycle_separated_df.columns:
-                all_data[cycle][f'{filename}_dis_cap'] = cycle_separated_df[disCap_col] / weight
+                # Take absolute value of discharge capacity
+                all_data[cycle][f'{filename}_dis_cap'] = cycle_separated_df[disCap_col].abs()
                 all_data[cycle][f'{filename}_dis_volt'] = cycle_separated_df[disVolt_col]
 
     # Create separate DataFrames for charge and discharge data for easier plotting
@@ -230,7 +291,7 @@ def run_plotting(data_path_str, dictionary_name_str, cycle_numbers_str, plot_tit
 
     # Read the legend dictionary from the provided text file
     try:
-        with open(dictionary_name, "r") as file:
+        with open(dictionary_name, "r", encoding="cp1252", errors='ignore') as file:
             contents = file.read()
             # Safely evaluate the string as a Python dictionary
             dic_legend_list = ast.literal_eval(contents)
@@ -306,13 +367,11 @@ def run_plotting(data_path_str, dictionary_name_str, cycle_numbers_str, plot_tit
         ax1.set_ylim(ymin, ymax)
 
     plt.tight_layout()
-    messagebox.showinfo("Success", "Plotting completed successfully. The graph will now be displayed.")
-    plt.show()
 
     # Define the save directory as the parent of the data directory
     save_dir = data_path.parent
 
-    # Save Figures
+    # Save Figures and data BEFORE showing the plot (in case user closes/kills process)
     try:
         plot_filename_base = 'volt-vs-cap_['+ str(cycle_numbers_str) + ']' + str(data_path.parts[-2])
         plot_path = os.path.join(save_dir, plot_filename_base)
@@ -357,8 +416,130 @@ def run_plotting(data_path_str, dictionary_name_str, cycle_numbers_str, plot_tit
         all_cycles_data.to_csv(data_save_path, sep='\t', index=False, float_format='%.4f')
         print(f"Plotted data saved to {data_save_path}")
 
+        # Create a temporary directory for NetCDF files
+        temp_nc_dir = os.path.join(save_dir, f"{plot_filename_base}_nc_temp")
+        os.makedirs(temp_nc_dir, exist_ok=True)
+
+        # Group files by batch using the legend_list
+        batch_files = {}
+        print("\nProcessing files for NetCDF export:")
+        print(f"Number of files to process: {len(filtered_data_file_names)}")
+        for idx, filename in enumerate(filtered_data_file_names):
+            batch_legend = legend_list[idx]
+            print(f"Processing file {filename} with legend {batch_legend}")
+            if batch_legend not in batch_files:
+                batch_files[batch_legend] = []
+            batch_files[batch_legend].append(filename)
+
+        # Save each cell as a separate NetCDF file using the legend name
+        for batch_name, files in batch_files.items():
+            for cell_idx, filename in enumerate(files, 1):
+                # Create dataset for this cell
+                cell_data = {}
+                
+                # Get raw data for this cell
+                for cycle in cycle_numbers:
+                    ch_cap = capacity_charge_all[cycle].get(f'{filename}_ch_cap')
+                    ch_volt = voltage_charge_all[cycle].get(f'{filename}_ch_volt')
+                    dis_cap = capacity_discharge_all[cycle].get(f'{filename}_dis_cap')
+                    dis_volt = voltage_discharge_all[cycle].get(f'{filename}_dis_volt')
+                    
+                    if ch_cap is not None and ch_volt is not None:
+                        cell_data[f'cycle_{cycle}_charge_capacity'] = ch_cap.values
+                        cell_data[f'cycle_{cycle}_charge_voltage'] = ch_volt.values
+                    if dis_cap is not None and dis_volt is not None:
+                        cell_data[f'cycle_{cycle}_discharge_capacity'] = dis_cap.values
+                        cell_data[f'cycle_{cycle}_discharge_voltage'] = dis_volt.values
+
+                if cell_data:  # Only create dataset if we have data
+                    # Convert to xarray Dataset
+                    ds = xr.Dataset(
+                        {name: (['point'], data) for name, data in cell_data.items()},
+                        coords={'point': np.arange(len(next(iter(cell_data.values()))))}
+                    )
+                    # Add metadata
+                    ds.attrs['cell_number'] = cell_idx
+                    ds.attrs['batch_name'] = batch_name
+                    ds.attrs['filename'] = filename
+                    if filename in weight_dict:
+                        ds.attrs['active_material_mass_mg'] = weight_dict[filename] * 1000  # Convert back to mg
+                    
+                    # Create safe filename from batch name and cell number
+                    safe_batch_name = "".join(c for c in batch_name if c.isalnum() or c in (' ', '-', '_')).strip()
+                    nc_filename = f'{safe_batch_name}-Cell{cell_idx}.nc'
+                    nc_path = os.path.join(temp_nc_dir, nc_filename)
+                    
+                    print(f"\nSaving NetCDF file for {batch_name} Cell {cell_idx}:")
+                    print(f"Path: {nc_path}")
+                    try:
+                        ds.to_netcdf(nc_path)
+                        print("Successfully saved NetCDF file")
+                    except Exception as e:
+                        print(f"Error saving NetCDF file: {e}")
+
+        # Create ZIP archive
+        zip_path = os.path.join(save_dir, f'{plot_filename_base}_raw_data.zip')
+        print(f"\nCreating ZIP archive at {zip_path}")
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            nc_files = []
+            for root, _, files in os.walk(temp_nc_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, temp_nc_dir)
+                    print(f"Adding file to ZIP: {arcname}")
+                    zipf.write(file_path, arcname)
+                    nc_files.append(arcname)
+            
+            if not nc_files:
+                print("Warning: No NetCDF files were found to add to the ZIP archive")
+
+        # Clean up temporary directory
+        shutil.rmtree(temp_nc_dir)
+        print(f"Raw data saved as NetCDF files in {zip_path}")
+
     except Exception as e:
-        messagebox.showerror("Error while Saving Data", f"An error occurred while saving the data to a text file: {e}")
+        messagebox.showerror("Error while Saving Data", f"An error occurred while saving the data: {e}")
+        return
+
+    # Show the plot now that everything is saved
+    messagebox.showinfo("Success", "Plotting completed successfully. The graph will now be displayed.")
+    plt.show()
+
+    # Close figure windows and optionally quit/destroy the Tk root
+    try:
+        plt.close('all')
+    except Exception:
+        pass
+
+    if close_app_on_plot_close:
+        try:
+            app_obj = globals().get('app', None)
+            if app_obj is not None:
+                try:
+                    app_obj.quit()
+                except Exception:
+                    pass
+                try:
+                    app_obj.destroy()
+                except Exception:
+                    pass
+            else:
+                try:
+                    root = tk._default_root
+                    if root is not None:
+                        try:
+                            root.quit()
+                        except Exception:
+                            pass
+                        try:
+                            root.destroy()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    return
 
 
 # --- GUI Application Class ---
@@ -442,6 +623,12 @@ class VoltVsCapGUI(tk.Tk):
             offvalue=False
         )
         self.first_cycle_discharge_only_checkbox.grid(row=3, column=0, columnspan=3, sticky="w", pady=10)
+        
+        # --- TAB BUTTONS: ensure controls are available on small screens ---
+        btn_frame = tk.Frame(frame)
+        btn_frame.grid(row=30, column=0, columnspan=3, pady=8, sticky="w")
+        tk.Button(btn_frame, text="Restore Last Settings", command=self.load_settings, font=("Arial", 10)).pack(side='left', padx=5)
+        tk.Button(btn_frame, text="Run Plotting", command=self.on_run_click, font=("Arial", 10, "bold"), bg="lightblue").pack(side='left', padx=5)
 
     def create_plot_customization(self, frame):
         """Creates widgets for customizing the plot's appearance."""
@@ -498,6 +685,53 @@ class VoltVsCapGUI(tk.Tk):
         self.ymax_entry = tk.Entry(ylim_frame, width=10)
         self.ymax_entry.pack(side='left', padx=5)
 
+        # --- TAB BUTTONS: ensure controls are available on small screens ---
+        plot_tab_btn_frame = tk.Frame(frame)
+        plot_tab_btn_frame.pack(fill='x', pady=(8, 4))
+        tk.Button(plot_tab_btn_frame, text="Restore Last Settings", command=self.load_settings, font=("Arial", 10)).pack(side='left', padx=5)
+        tk.Button(plot_tab_btn_frame, text="Run Plotting", command=self.on_run_click, font=("Arial", 10, "bold"), bg="lightblue").pack(side='left', padx=5)
+
+        # Font settings
+        tk.Label(frame, text="Font Settings", font=("Arial", 12, "bold")).pack(fill='x', pady=(20, 5))
+        
+        # Font family selection
+        tk.Label(frame, text="Font Family:", anchor="w").pack(fill='x', pady=(5, 0))
+        self.font_family_var = tk.StringVar()
+        self.font_family_dropdown = ttk.Combobox(frame, textvariable=self.font_family_var, width=30)
+        # Get available font families from matplotlib
+        self.available_fonts = sorted([f.name for f in matplotlib.font_manager.fontManager.ttflist])
+        self.font_family_dropdown['values'] = self.available_fonts
+        self.font_family_dropdown.pack(pady=5)
+        # Set default font
+        if 'Arial' in self.available_fonts:
+            self.font_family_dropdown.set('Arial')
+        else:
+            self.font_family_dropdown.set(self.available_fonts[0])
+        
+        # Title font size
+        tk.Label(frame, text="Title Font Size:", anchor="w").pack(fill='x', pady=(5, 0))
+        self.title_fontsize_entry = tk.Entry(frame, width=10)
+        self.title_fontsize_entry.pack(pady=5)
+        self.title_fontsize_entry.insert(0, "16")
+
+        # Axis labels font size
+        tk.Label(frame, text="Axis Labels Font Size:", anchor="w").pack(fill='x', pady=(5, 0))
+        self.axis_label_fontsize_entry = tk.Entry(frame, width=10)
+        self.axis_label_fontsize_entry.pack(pady=5)
+        self.axis_label_fontsize_entry.insert(0, "14")
+
+        # Tick labels font size
+        tk.Label(frame, text="Tick Labels Font Size:", anchor="w").pack(fill='x', pady=(5, 0))
+        self.tick_label_fontsize_entry = tk.Entry(frame, width=10)
+        self.tick_label_fontsize_entry.pack(pady=5)
+        self.tick_label_fontsize_entry.insert(0, "12")
+
+        # Legend font size
+        tk.Label(frame, text="Legend Font Size:", anchor="w").pack(fill='x', pady=(5, 0))
+        self.legend_fontsize_entry = tk.Entry(frame, width=10)
+        self.legend_fontsize_entry.pack(pady=5)
+        self.legend_fontsize_entry.insert(0, "10")
+
     def create_dict_editor(self, frame):
         """Creates widgets for loading, editing, and saving the legend dictionary file."""
         tk.Label(frame, text="Edit content of dictionary_HIPOLE.txt:", anchor="w").pack(fill='x', pady=(10, 0))
@@ -508,6 +742,12 @@ class VoltVsCapGUI(tk.Tk):
         tk.Button(dict_button_frame, text="Load Dictionary", command=self.load_dictionary).pack(side='left', padx=5)
         tk.Button(dict_button_frame, text="Save Dictionary", command=self.save_dictionary).pack(side='left', padx=5)
         self.load_dictionary()
+
+        # --- TAB BUTTONS: ensure controls are available on small screens ---
+        dict_tab_btn_frame = tk.Frame(frame)
+        dict_tab_btn_frame.pack(pady=5)
+        tk.Button(dict_tab_btn_frame, text="Restore Last Settings", command=self.load_settings, font=("Arial", 10)).pack(side='left', padx=5)
+        tk.Button(dict_tab_btn_frame, text="Run Plotting", command=self.on_run_click, font=("Arial", 10, "bold"), bg="lightblue").pack(side='left', padx=5)
 
     def browse_data_path(self):
         """Opens a file dialog for the user to select the data directory."""
@@ -532,7 +772,7 @@ class VoltVsCapGUI(tk.Tk):
             self.status_label.config(text="Warning: Dictionary file not found.")
             return
         try:
-            with open(dict_path, "r", encoding="utf-8") as file:
+            with open(dict_path, "r", encoding="cp1252", errors='ignore') as file:
                 content = file.read()
                 self.dict_text.delete(1.0, tk.END)
                 self.dict_text.insert(tk.END, content)
@@ -548,7 +788,7 @@ class VoltVsCapGUI(tk.Tk):
         try:
             # Check if the text is a valid dictionary format before saving
             ast.literal_eval(content)
-            with open(dict_path, "w", encoding="utf-8") as file:
+            with open(dict_path, "w", encoding="cp1252", errors='ignore') as file:
                 file.write(content)
             self.status_label.config(text="Dictionary saved successfully.")
         except (SyntaxError, ValueError) as e:
@@ -573,7 +813,12 @@ class VoltVsCapGUI(tk.Tk):
             "xmax": self.xmax_entry.get(),
             "ymin": self.ymin_entry.get(),
             "ymax": self.ymax_entry.get(),
-            "first_cycle_discharge_only": self.first_cycle_discharge_only_var.get()
+            "first_cycle_discharge_only": self.first_cycle_discharge_only_var.get(),
+            "title_fontsize": self.title_fontsize_entry.get(),
+            "axis_label_fontsize": self.axis_label_fontsize_entry.get(),
+            "tick_label_fontsize": self.tick_label_fontsize_entry.get(),
+            "legend_fontsize": self.legend_fontsize_entry.get(),
+            "font_family": self.font_family_var.get()
         }
         try:
             with open(self.settings_file, 'wb') as f:
@@ -616,6 +861,22 @@ class VoltVsCapGUI(tk.Tk):
             self.ymax_entry.delete(0, tk.END)
             self.ymax_entry.insert(0, settings.get("ymax", ""))
             self.first_cycle_discharge_only_var.set(settings.get("first_cycle_discharge_only", False))
+            
+            # Load font settings
+            saved_font = settings.get("font_family", "Arial")
+            if saved_font in self.available_fonts:
+                self.font_family_dropdown.set(saved_font)
+            
+            # Load font sizes
+            self.title_fontsize_entry.delete(0, tk.END)
+            self.title_fontsize_entry.insert(0, settings.get("title_fontsize", "16"))
+            self.axis_label_fontsize_entry.delete(0, tk.END)
+            self.axis_label_fontsize_entry.insert(0, settings.get("axis_label_fontsize", "14"))
+            self.tick_label_fontsize_entry.delete(0, tk.END)
+            self.tick_label_fontsize_entry.insert(0, settings.get("tick_label_fontsize", "12"))
+            self.legend_fontsize_entry.delete(0, tk.END)
+            self.legend_fontsize_entry.insert(0, settings.get("legend_fontsize", "10"))
+            
             self.status_label.config(text="Settings loaded successfully.")
         except Exception as e:
             self.status_label.config(text=f"Error loading settings: {e}")
@@ -640,11 +901,37 @@ class VoltVsCapGUI(tk.Tk):
         ymin_str = self.ymin_entry.get()
         ymax_str = self.ymax_entry.get()
         first_cycle_discharge_only = self.first_cycle_discharge_only_var.get()
+        
+        # Get font sizes
+        try:
+            title_fontsize = int(self.title_fontsize_entry.get())
+            axis_label_fontsize = int(self.axis_label_fontsize_entry.get())
+            tick_label_fontsize = int(self.tick_label_fontsize_entry.get())
+            legend_fontsize = int(self.legend_fontsize_entry.get())
+        except ValueError:
+            messagebox.showerror("Error", "Font sizes must be valid numbers")
+            return
+
+        # Get selected font family
+        font_family = self.font_family_var.get()
+        
+        # Set font settings in matplotlib
+        plt.rcParams.update({
+            'font.family': 'sans-serif',
+            'font.sans-serif': [font_family, 'DejaVu Sans', 'Arial'],
+            'font.size': tick_label_fontsize,
+            'axes.titlesize': title_fontsize,
+            'axes.labelsize': axis_label_fontsize,
+            'xtick.labelsize': tick_label_fontsize,
+            'ytick.labelsize': tick_label_fontsize,
+            'legend.fontsize': legend_fontsize
+        })
 
         # Call the core plotting function with all the collected parameters
         run_plotting(data_path_str, dictionary_name_str, cycle_numbers_str, plot_title_str,
                      xlabel_text_str, ylabel_text_str, color_list_str, alpha_list_str,
-                     xmin_str, xmax_str, ymin_str, ymax_str, first_cycle_discharge_only)
+                     xmin_str, xmax_str, ymin_str, ymax_str, first_cycle_discharge_only,
+                     close_app_on_plot_close=False)  # Keep GUI open by default when plot closes
 
 
 if __name__ == '__main__':

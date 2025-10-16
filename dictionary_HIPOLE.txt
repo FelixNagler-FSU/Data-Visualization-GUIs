@@ -5,18 +5,22 @@
                    'FN_E4a_120ulmg-1_CC': ['CMC, C-Al, CoinCell 120 $\mu$g/mg', '', '', ''],
                    'FN_E4a_10ulmg-1_CC': ['CMC, C-Al, CoinCell, 10 $\mu$g/mg', '', '', ''],
 	           #'FN_E4b': ['CMC, 30 min ball mill, C-Al', '', '', ''],
-		   'FN_E4b_CC': ['CMC, 30 min ball mill, C-Al, CoinCell', '', '', ''],
+		   'FN_E4b_CC': ['CMC, Ball Mill, C-Al, CoinCell', '', '', ''],
 		   'FN_E4b_no-extra-drying_CC': ['CMC, no extra drying, C-Al, CoinCell', '', '', ''],
-		   'FN_E4b_110dC_CC': ['CMC, C-Al, 6h@110 dC, CoinCell', '', '', ''],
-		   'FN_E4b_95dC_CC': ['CMC, C-Al, 1h@95 dC, CoinCell', '', '', ''],
-                   'FN_E4c_CC': ['CMC, 10 min ball mill, Al, CoinCell', '', '', ''],
-                   'FN_E5_CC': ['PVDF, C-Al, CoinCell', '', '', ''],
+		   'FN_E4b_110dC_CC': ['CMC, Ball Mill, C-Al, CoinCell, 1h@110 dC', '', '', ''],
+		   'FN_E4b_95dC_CC': ['CMC, Ball Mill, C-Al, CoinCell, 1h@95 dC', '', '', ''],
+                   'FN_E4c_CC': ['CMC, Ball Mill, Al, CoinCell', '', '', ''],
+                   'FN_E5_CC': ['PVDF, Ball Mill, C-Al, CoinCell', '', '', ''],
                    'FN_E5_55ulg-1_CC': ['PVDF, C-Al, CoinCell, 55 $\mu$g/mg', '', '', ''],
                    'FN_E5_10ulg-1_CC': ['PVDF, C-Al, CoinCell, 10 $\mu$g/mg', '', '', ''],
                    'FN_E5_Swagelok': ['PVDF, C-Al, Swagelok', '', '', ''],
-		   'FN_E7a': ['PVDF, C-Al, CoinCell', '', '', ''],
-		   'FN_E8b': ['CMC, ThinkyMixer, Al, CoinCell', '', '', ''],
-
+		   'FN_E7a': ['PVDF, ThinkyMixer, C-Al, CoinCell', '', '', ''],
+		   'FN_E8a_CC': ['CMC, Planetary Mixer, C-Al, CoinCell', '', '', ''],
+		   'FN_E8b_CC': ['CMC, Planetary Mixer, Al, 5 mAh/cm²', '', '', ''],
+		   '01_FN_E8b_2mm-hole-Li_CC': ['CMC, Planetary Mixer, Al, 2mm Li-hole, 5 mAh/cm²', '', '', ''],
+		   '02_FN_E8b_2mm-hole-Li_CC': ['CMC, Planetary Mixer, Al, 2mm Li-hole, 7 mAh/cm²', '', '', ''],
+		   'FN_E8b_1mm-hole-StS_CC': ['CMC, Planetary Mixer, Al, 1mm Spacer-hole, 7.5 mAh/cm²', '', '', ''],
+		   'FN_E9_CC': ['CMC, Planetary Mixer, C-Al, CoinCell', '', '', ''],
 
 
 
@@ -25,6 +29,8 @@
                    'dummy_end': ['', '', '', '']
 
                    }
+
+
 
 
 

@@ -1,639 +1,1241 @@
-# Importieren aller notwendigen Bibliotheken
 import pandas as pd
 import numpy as np
 import scipy as sp
 import matplotlib
-from matplotlib.lines import Line2D
-import matplotlib.colors as mcolors
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
 from pathlib import Path
 import os
 import ast
 import matplotlib.font_manager as font_manager
 import pickle
-from tkinter import Tk, Label, Button, Entry, Text, filedialog, messagebox, Checkbutton, StringVar, BooleanVar, \
-    Toplevel, END, DISABLED, NORMAL, scrolledtext, Frame
+import zipfile
+import xarray as xr
+import shutil
+import sys
 
-# Import für die Einbettung von Matplotlib in Tkinter
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-
-# Matplotlib-Backend für die GUI einstellen.
-# Wichtig: 'TkAgg' muss verwendet werden, da die GUI mit Tkinter erstellt wird.
+# Use TkAgg backend to integrate with the tkinter GUI
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+import matplotlib.colors as mcolors
 
-
-# --- Hauptlogik für die Datenverarbeitung und das Plotten ---
-def process_and_plot(app_instance, data_path_str, dictionary_path_str, different_batches_str, number_of_cells_str,
-                     charge_graph_bool, discharge_graph_bool, ce_graph_bool, color_list_str, marker_list_str):
+# --- Refactored plotting logic into a function ---
+def run_plotting(data_path_str, dictionary_name_str, different_batches_str, number_of_cells_str, ce_graph_str,
+                 capacity_plot_mode_str, first_cycle_discharge_only_str, plot_individual_cells_str, color_list_str,
+                 marker_list_str,
+                 capacity_plot_title_str, capacity_ylabel_text_str, capacity_xmin_str, capacity_xmax_str,
+                 capacity_ymin_str, capacity_ymax_str,
+                 ce_plot_title_str, ce_ylabel_text_str, ce_xmin_str, ce_xmax_str, ce_ymin_str, ce_ymax_str,
+                 individual_cell_legend_suffix_str, 
+                 legend_font_size="12", legend_font_family="default",
+                 axis_label_font_size="13", axis_label_font_family="default",
+                 tick_label_font_size="12", tick_label_font_family="default",
+                 close_app_on_plot_close=False):
     """
-    Verarbeitet die Daten und erstellt die Plots.
-
-    Args:
-        app_instance (object): Instanz der GUI-Anwendung zum Loggen von Nachrichten.
-        data_path_str (str): Pfad zum Datenverzeichnis.
-        dictionary_path_str (str): Pfad zur Dictionary-Datei.
-        different_batches_str (str): Anzahl der verschiedenen Batches.
-        number_of_cells_str (str): Komma-separierte String der Zellenzahlen pro Batch.
-        charge_graph_bool (bool): Flag, ob die Ladekapazität geplottet werden soll.
-        discharge_graph_bool (bool): Flag, ob die Entladekapazität geplottet werden soll.
-        ce_graph_bool (bool): Flag, ob die Coulombic Efficiency geplottet werden soll.
-        color_list_str (str): Komma-separierte String der Farben.
-        marker_list_str (str): Komma-separierte String der Marker-Symbole.
+    This function contains the core plotting logic, refactored to accept user inputs.
+    It processes the data and generates the plots based on the provided parameters.
     """
-    app_instance.log_message("--- Neuer Durchlauf gestartet ---")
 
+    # Convert string inputs to the required data types
     try:
-        # Konvertierung der Eingabepfade und Zahlen
         data_path = Path(data_path_str)
-        if not data_path.is_dir():
-            app_instance.log_message(f"Fehler: Datenverzeichnis nicht gefunden: {data_path_str}")
-            messagebox.showerror("Eingabefehler", "Datenverzeichnis nicht gefunden. Bitte prüfen Sie den Pfad.")
-            return
-
-        data_file_names = os.listdir(data_path)
-        data_file_names.sort()  # Wichtig für konsistente Verarbeitung
-
-        dictionary_name = Path(dictionary_path_str)
-        if not dictionary_name.is_file():
-            app_instance.log_message(f"Fehler: Dictionary-Datei nicht gefunden: {dictionary_path_str}")
-            messagebox.showerror("Eingabefehler", "Dictionary-Datei nicht gefunden. Bitte prüfen Sie den Pfad.")
-            return
-
+        dictionary_name = Path(dictionary_name_str)
         different_batches = int(different_batches_str)
         number_of_cells = [int(x.strip()) for x in number_of_cells_str.split(',')]
-
-        # Neue Listen aus den GUI-Eingaben
+        ce_graph = ce_graph_str
+        capacity_plot_mode = capacity_plot_mode_str
+        first_cycle_discharge_only = first_cycle_discharge_only_str
+        plot_individual_cells = plot_individual_cells_str
         color_list = [c.strip() for c in color_list_str.split(',')]
         marker_list = [m.strip() for m in marker_list_str.split(',')]
+        capacity_plot_title = capacity_plot_title_str
+        capacity_ylabel_text = capacity_ylabel_text_str
+        ce_plot_title = ce_plot_title_str
+        ce_ylabel_text = ce_ylabel_text_str
+        individual_cell_legend_suffix = individual_cell_legend_suffix_str
 
-        # Überprüfung der Eingabekonsistenz
-        if sum(number_of_cells) != len(data_file_names):
-            app_instance.log_message("Eingabefehler: Gesamt-Zellenzahl stimmt nicht mit Anzahl der Dateien überein.")
-            messagebox.showerror("Eingabefehler",
-                                 "Die Gesamtzahl der Zellen stimmt nicht mit der Anzahl der Dateien im Verzeichnis überein.")
-            return
+        # Parse and handle optional numerical inputs
+        capacity_xmin = float(capacity_xmin_str) if capacity_xmin_str else None
+        capacity_xmax = float(capacity_xmax_str) if capacity_xmax_str else None
+        capacity_ymin = float(capacity_ymin_str) if capacity_ymin_str else None
+        capacity_ymax = float(capacity_ymax_str) if capacity_ymax_str else None
+        ce_xmin = float(ce_xmin_str) if ce_xmin_str else None
+        ce_xmax = float(ce_xmax_str) if ce_xmax_str else None
+        ce_ymin = float(ce_ymin_str) if ce_ymin_str else None
+        ce_ymax = float(ce_ymax_str) if ce_ymax_str else None
 
-        if not (charge_graph_bool or discharge_graph_bool or ce_graph_bool):
-            app_instance.log_message("Keine Plot-Optionen ausgewählt.")
-            messagebox.showwarning("Keine Plots", "Bitte mindestens eine Plot-Option auswählen.")
-            return
-
-    except (ValueError, FileNotFoundError) as e:
-        app_instance.log_message(f"Fehler bei der Konvertierung der Eingabe oder Dateipfad nicht gefunden: {e}")
-        messagebox.showerror("Eingabefehler",
-                             f"Fehler bei der Konvertierung der Eingabe oder Dateipfad nicht gefunden: {e}")
+    except (ValueError, IndexError) as e:
+        messagebox.showerror("Input Error", f"Please check your inputs. Error: {e}")
         return
 
-    # Dictionaries und Listen initialisieren
-    weight_dict = {}
-    specific_charge_capacity_list = []
-    specific_discharge_capacity_list = []
+    # Check if the directories and files exist
+    if not data_path.is_dir():
+        messagebox.showerror("Error", f"Data directory not found: {data_path}")
+        return
+    if not dictionary_name.is_file():
+        messagebox.showerror("Error", f"Dictionary file not found: {dictionary_name}")
+        return
 
-    # Lese das Dictionary mit den Legendeninformationen aus der Datei
+    data_file_names = os.listdir(data_path)
+
+    plt.rcParams.update({'font.size': 13})
+    
+    # Store the original matplotlib font settings at the start
+    original_font_family = plt.rcParams['font.family']
+
+    # --- Data Processing Section ---
+    weight_dict = {}
     try:
         with open(dictionary_name, "r") as file:
             contents = file.read()
-            dic_legend_list = ast.literal_eval(contents)
-    except Exception as e:
-        app_instance.log_message(f"Fehler beim Einlesen oder Parsen des Dictionarys: {e}")
-        messagebox.showerror("Fehler beim Einlesen", f"Fehler beim Einlesen oder Parsen des Dictionarys: {e}")
+            legend_info_dict = ast.literal_eval(contents)
+    except FileNotFoundError:
+        messagebox.showerror("Error", f"Dictionary file not found: {dictionary_name}")
+        return
+    except (SyntaxError, ValueError) as e:
+        messagebox.showerror("Error", f"Invalid format in dictionary file. Error: {e}")
         return
 
-    # Berechnet die Zellennummer, bei der der erste Zyklus eines neuen Batches beginnt
+    if len(number_of_cells) != len(data_file_names):
+        messagebox.showwarning("Warning",
+                               "Number of cells per batch does not match the number of files. Processing will continue, but this might lead to errors.")
+
     cell_numeration = [sum(number_of_cells[0:counter_var]) for counter_var in range(0, len(number_of_cells))]
     cell_numeration.append(sum(number_of_cells))
 
-    # Einlesen und Verarbeiten der Daten in einer einzigen Schleife
-    processed_files_count = 0
+    max_rows = 0
+    specific_charge_capacity_list = []
+    specific_discharge_capacity_list = []
+
+    # Use yadg to read .mpr files and extract per-cycle specific capacities (mAh/g)
     for counter_var in range(0, len(data_file_names)):
         file_path = data_path / data_file_names[counter_var]
         filename = data_file_names[counter_var]
-        app_instance.log_message(f"Verarbeite Datei: {filename}")
 
-        header_line_number = None
-        file_weight = None
-
-        try:
-            with open(file_path, "r", encoding="cp1252") as f:
-                lines = f.readlines()
-                for i, line in enumerate(lines):
-                    if "mode	ox/red	error" in line.strip():
-                        header_line_number = i - 3
-                    if "mass of active material" in line.lower():
-                        try:
-                            parts = line.split(":")
-                            number_str = parts[1].strip().split(' ')[0]
-                            number_float = float(number_str.replace(',', '.')) / 1000
-                            file_weight = number_float
-                            weight_dict[filename] = file_weight
-                        except (IndexError, ValueError):
-                            app_instance.log_message(f"  - Warnung: Konnte Aktivmasse in {filename} nicht auslesen.")
-
-        except Exception as e:
-            app_instance.log_message(f"  - Fehler beim Einlesen der Datei {filename}. Überspringe. Fehler: {e}")
-            continue
-
-        if header_line_number is None or file_weight is None:
-            app_instance.log_message(f"  - Überspringe Datei: Header oder Aktivmasse in {filename} fehlt.")
+        # Only process .mpr files
+        if Path(filename).suffix.lower() != '.mpr':
+            print(f"Skipping non-mpr file: {filename}")
             continue
 
         try:
-            data_df = pd.read_table(
-                filepath_or_buffer=file_path,
-                sep='\t',
-                header=header_line_number,
-                decimal=',',
-                encoding='cp1252'
-            )
+            import yadg
+            import json
+        except Exception:
+            print("yadg or json module not available. Ensure yadg is installed.")
+            break
 
-            data_df.rename(columns={'Q discharge/mA.h': 'DisCap', 'Q charge/mA.h': 'ChCap', 'half cycle': 'Half_cycle'},
-                           inplace=True)
-
-            half_cycles = data_df['Half_cycle']
-            half_cycles_diff = half_cycles.diff(periods=1)
-            cycle_index = half_cycles_diff.loc[half_cycles_diff > 0.5].index - 1
-
-            filtered_DisCap = data_df['DisCap'].loc[cycle_index]
-            filtered_ChCap = data_df['ChCap'].loc[cycle_index]
-
-            filtered_DisCap = filtered_DisCap.loc[filtered_DisCap > 0.0] / file_weight
-            filtered_ChCap = filtered_ChCap.loc[filtered_ChCap > 0.0] / file_weight
-
-            specific_discharge_capacity_list.append(filtered_DisCap.reset_index(drop=True))
-            specific_charge_capacity_list.append(filtered_ChCap.reset_index(drop=True))
-            processed_files_count += 1
-            app_instance.log_message(f"  - Datei erfolgreich verarbeitet.")
-
+        try:
+            ds_raw = yadg.extractors.extract(filetype='eclab.mpr', path=str(file_path))
         except Exception as e:
-            app_instance.log_message(f"  - Fehler bei der Datenverarbeitung für {filename}: {e}")
+            print(f"Warning: failed to parse {filename} with yadg: {e}. Skipping.")
             continue
 
-    if not specific_discharge_capacity_list:
-        app_instance.log_message("Fehler: Keine gültigen Dateien für die Verarbeitung gefunden.")
-        messagebox.showerror("Fehler", "Keine gültigen Dateien für die Verarbeitung gefunden.")
-        return
+        # read active material mass from original_metadata (JSON-like)
+        mass_g = None
+        try:
+            orig = getattr(ds_raw, 'attrs', {}).get('original_metadata', None)
+            if orig is None and 'original_metadata' in ds_raw:
+                orig = ds_raw['original_metadata']
+            if isinstance(orig, (bytes, str)):
+                try:
+                    orig = json.loads(orig)
+                except Exception:
+                    try:
+                        orig = ast.literal_eval(orig)
+                    except Exception:
+                        orig = None
 
-    app_instance.log_message(
-        f"Verarbeitung abgeschlossen. {processed_files_count} von {len(data_file_names)} Dateien erfolgreich verarbeitet.")
-    app_instance.log_message("Berechne Mittelwerte und Standardabweichungen...")
+            def _find_key(d, key):
+                if isinstance(d, dict):
+                    if key in d:
+                        return d[key]
+                    for v in d.values():
+                        res = _find_key(v, key)
+                        if res is not None:
+                            return res
+                return None
 
-    # Finde die maximale Länge aller eingelesenen Daten
-    max_len = max(len(s) for s in specific_discharge_capacity_list)
+            found = None
+            if isinstance(orig, dict) and 'settings' in orig and 'active_material_mass' in orig['settings']:
+                found = orig['settings']['active_material_mass']
+            if found is None:
+                found = _find_key(orig, 'active_material_mass')
+            if found is not None:
+                mg = float(found)
+                mass_g = mg / 1000.0
+                weight_dict[filename] = mass_g
+                print(f"Active mass for {filename}: {mg} mg")
+        except Exception as e:
+            print(f"Warning: error reading metadata for {filename}: {e}")
 
-    # Auffüllen der Listen mit NaN-Werten, um einheitliche Länge zu gewährleisten
-    padded_dis_list = [series.reindex(range(max_len), fill_value=np.nan) for series in specific_discharge_capacity_list]
-    padded_ch_list = [series.reindex(range(max_len), fill_value=np.nan) for series in specific_charge_capacity_list]
+        if mass_g is None:
+            print(f"Warning: No active material mass found for {filename}. Skipping file.")
+            continue
 
-    # Erstellen der endgültigen DataFrames aus den aufgefüllten Listen
-    specific_discharge_capacity = pd.DataFrame({
-        f'{data_file_names[i]} DisCap': padded_dis_list[i] for i in range(len(padded_dis_list))
-    })
+        # Convert datatree -> xarray Dataset if needed
+        try:
+            if hasattr(ds_raw, 'to_dataset'):
+                ds = ds_raw.to_dataset()
+            elif hasattr(ds_raw, 'to_xarray'):
+                ds = ds_raw.to_xarray()
+            else:
+                if hasattr(ds_raw, 'get') and ds_raw.get('/') is not None:
+                    ds = ds_raw.get('/').to_dataset()
+                else:
+                    ds = ds_raw
+        except Exception:
+            ds = ds_raw
 
-    specific_charge_capacity = pd.DataFrame({
-        f'{data_file_names[i]} ChCap': padded_ch_list[i] for i in range(len(padded_ch_list))
-    })
+        # find Q and half-cycle variables
+        q_arr = None
+        half_arr = None
+        if 'Q charge or discharge' in ds:
+            q_arr = np.asarray(ds['Q charge or discharge'].values, dtype=float)
+        elif 'Q charge/discharge' in ds:
+            q_arr = np.asarray(ds['Q charge/discharge'].values, dtype=float)
+        if 'half cycle' in ds:
+            half_arr = np.asarray(ds['half cycle'].values)
+        elif 'Half_cycle' in ds:
+            half_arr = np.asarray(ds['Half_cycle'].values)
 
-    coulombic_efficency = (specific_discharge_capacity / specific_charge_capacity) * 100
+        if q_arr is None or half_arr is None:
+            print(f"Warning: Q or half-cycle variables not found in {filename}. Skipping.")
+            continue
 
-    # Berechnung der Mittelwerte und Standardabweichungen pro Batch
+        # Build a dataframe and take last sample per half-cycle
+        tmp_df = pd.DataFrame({'Q': q_arr, 'half': half_arr})
+        last_charge = tmp_df[tmp_df['Q'] > 0].groupby('half', sort=False).last()['Q']
+        last_discharge = tmp_df[tmp_df['Q'] < 0].groupby('half', sort=False).last()['Q'].abs()
+
+        # Map half-cycle keys to cycles (keep first-occurrence order)
+        first_cycle_discharge_only_bool = True if str(first_cycle_discharge_only).lower() in ('yes', 'true', '1') else False
+        half_keys = list(dict.fromkeys(list(last_charge.index) + list(last_discharge.index)))
+
+        charge_by_cycle = {}
+        discharge_by_cycle = {}
+
+        for h in half_keys:
+            try:
+                h_int = int(h)
+            except Exception:
+                continue
+
+            if first_cycle_discharge_only_bool:
+                if h_int == 0:
+                    cycle = 1
+                    is_charge = False
+                else:
+                    cycle = (h_int - 2) // 2 + 2
+                    is_charge = (h_int % 2 == 0)
+            else:
+                cycle = h_int // 2 + 1
+                is_charge = (h_int % 2 == 0)
+
+            if is_charge:
+                val = last_charge.get(h, float('nan'))
+                if not (val is None or (isinstance(val, float) and np.isnan(val))):
+                    if cycle not in charge_by_cycle:
+                        charge_by_cycle[cycle] = val
+            else:
+                val = last_discharge.get(h, float('nan'))
+                if not (val is None or (isinstance(val, float) and np.isnan(val))):
+                    if cycle not in discharge_by_cycle:
+                        discharge_by_cycle[cycle] = val
+
+        # assemble per-cycle DataFrame
+        all_cycles = sorted(set(list(charge_by_cycle.keys()) + list(discharge_by_cycle.keys())))
+        df_cycles = pd.DataFrame(index=all_cycles, columns=['charge', 'discharge'], dtype=float)
+        for c in all_cycles:
+            df_cycles.loc[c, 'charge'] = charge_by_cycle.get(c, float('nan'))
+            df_cycles.loc[c, 'discharge'] = discharge_by_cycle.get(c, float('nan'))
+        df_cycles.index.name = 'cycle'
+
+        
+        try:
+            #df_cycles['charge_mAh_g'] = (df_cycles['charge'].astype(float) / 3.6) / float(mass_g) # Convert Q (Coulomb) -> mAh and normalize by active mass (mass_g is in g)
+            df_cycles['charge_mAh_g'] = (df_cycles['charge'].astype(float)) / float(mass_g)
+        except Exception:
+            df_cycles['charge_mAh_g'] = float('nan')
+        try:
+            #df_cycles['discharge_mAh_g'] = (df_cycles['discharge'].astype(float) / 3.6) / float(mass_g) # Convert Q (Coulomb) -> mAh and normalize by active mass (mass_g is in g)
+            df_cycles['discharge_mAh_g'] = (df_cycles['discharge'].astype(float)) / float(mass_g) 
+        except Exception:
+            df_cycles['discharge_mAh_g'] = float('nan')
+
+        # Append per-file Series (indexed 0..N-1 after reset)
+        specific_charge_capacity_list.append(df_cycles['charge_mAh_g'].reset_index(drop=True))
+        specific_discharge_capacity_list.append(df_cycles['discharge_mAh_g'].reset_index(drop=True))
+
+    max_len = 0
+    for series in specific_discharge_capacity_list:
+        if len(series) > max_len:
+            max_len = len(series)
+
+    padded_discharge_list = []
+    padded_charge_list = []
+
+    for series in specific_discharge_capacity_list:
+        padded_series = series.reindex(range(max_len), fill_value=np.nan)
+        padded_discharge_list.append(padded_series)
+
+    for series in specific_charge_capacity_list:
+        padded_series = series.reindex(range(max_len), fill_value=np.nan)
+        padded_charge_list.append(padded_series)
+
+    specific_discharge_capacity = pd.DataFrame()
+    specific_charge_capacity = pd.DataFrame()
+
+    for i, filtered_dis_cap in enumerate(padded_discharge_list):
+        specific_discharge_capacity[f'{data_file_names[i]} DisCap'] = filtered_dis_cap
+
+    for i, filtered_ch_cap in enumerate(padded_charge_list):
+        specific_charge_capacity[f'{data_file_names[i]} ChCap'] = filtered_ch_cap
+
+    specific_charge_capacity_cleaned = specific_charge_capacity.replace(0, np.nan)
+    discharge_for_ce = specific_discharge_capacity.copy()
+    charge_for_ce = specific_charge_capacity_cleaned.copy()
+
+    discharge_for_ce.columns = [col.replace(" DisCap", "") for col in discharge_for_ce.columns]
+    charge_for_ce.columns = [col.replace(" ChCap", "") for col in charge_for_ce.columns]
+
+    coulombic_efficiency = (discharge_for_ce / charge_for_ce) * 100
+
     for counter_var in range(0, different_batches):
-        batch_cols_dis = specific_discharge_capacity.iloc[:,
-                         cell_numeration[counter_var]:cell_numeration[counter_var + 1]]
-        specific_discharge_capacity[
-            f'{data_file_names[cell_numeration[counter_var]]} mean discharge capacity'] = batch_cols_dis.mean(axis=1)
-        specific_discharge_capacity[f'{data_file_names[cell_numeration[counter_var]]} stddev'] = batch_cols_dis.std(
-            axis=1)
+        start_index = cell_numeration[counter_var]
+        end_index = cell_numeration[counter_var + 1]
 
-        batch_cols_ch = specific_charge_capacity.iloc[:, cell_numeration[counter_var]:cell_numeration[counter_var + 1]]
-        specific_charge_capacity[
-            f'{data_file_names[cell_numeration[counter_var]]} mean charge capacity'] = batch_cols_ch.mean(axis=1)
-        specific_charge_capacity[f'{data_file_names[cell_numeration[counter_var]]} stddev'] = batch_cols_ch.std(axis=1)
+        specific_discharge_capacity[f'{data_file_names[start_index]} mean discharge capacity'] = \
+            specific_discharge_capacity.iloc[:, start_index:end_index].mean(axis=1)
 
-        batch_cols_ce = coulombic_efficency.iloc[:, cell_numeration[counter_var]:cell_numeration[counter_var + 1]]
-        coulombic_efficency[f'{data_file_names[cell_numeration[counter_var]]} mean'] = batch_cols_ce.mean(axis=1)
-        coulombic_efficency[f'{data_file_names[cell_numeration[counter_var]]} stddev'] = batch_cols_ce.std(axis=1)
+        specific_discharge_capacity[f'{data_file_names[start_index]} stddev discharge capacity'] = \
+            specific_discharge_capacity.iloc[:, start_index:end_index].std(axis=1)
 
-    # Erstellen der Legendenliste
+        specific_charge_capacity[f'{data_file_names[start_index]} mean charge capacity'] = \
+            specific_charge_capacity.iloc[:, start_index:end_index].mean(axis=1)
+
+        specific_charge_capacity[f'{data_file_names[start_index]} stddev charge capacity'] = \
+            specific_charge_capacity.iloc[:, start_index:end_index].std(axis=1)
+
+        coulombic_efficiency[f'{data_file_names[start_index]} mean'] = \
+            coulombic_efficiency.iloc[:, start_index:end_index].mean(axis=1)
+
+        coulombic_efficiency[f'{data_file_names[start_index]} stddev'] = \
+            coulombic_efficiency.iloc[:, start_index:end_index].std(axis=1)
+
     columns_name_list = list(specific_discharge_capacity.columns.values)
     batch_names_list = [x for x in columns_name_list if 'mean discharge capacity' in x]
     legend_list = []
     for ele in batch_names_list:
-        found = False
-        for key in dic_legend_list.keys():
+        for key in legend_info_dict.keys():
             if key in ele:
-                legend_list.append(str(dic_legend_list[key][0]))
-                found = True
-                break
-        if not found:
-            legend_list.append("Unbekannter Batch")
-
+                element1 = str(legend_info_dict[key][0])
+                legend_list.append(f'{element1} ')
     if len(legend_list) != different_batches:
-        app_instance.log_message(
-            'Warnung: Nicht alle Batches wurden im Dictionary gefunden. Die Plot-Legende ist möglicherweise unvollständig.')
+        print('Error: Not all batches were found in dictionary')
 
-    # Hinzufügen der Cycle-Spalte
     specific_discharge_capacity['Cycle'] = np.arange(1, specific_discharge_capacity.shape[0] + 1)
-    coulombic_efficency['Cycle'] = np.arange(1, coulombic_efficency.shape[0] + 1)
+    specific_charge_capacity['Cycle'] = np.arange(1, specific_charge_capacity.shape[0] + 1)
+    coulombic_efficiency['Cycle'] = np.arange(1, coulombic_efficiency.shape[0] + 1)
 
-    # Anpassen der Plot-Grenzen
-    max_cycle_dis = specific_discharge_capacity.shape[0]
-    max_cycle_ce = coulombic_efficency.shape[0]
-
-    # Plotting der Graphen
-    app_instance.log_message("Erstelle Graphen...")
-
-    # Überprüfen, ob die Listen genügend Elemente haben
-    num_batches = different_batches
-    if len(color_list) < num_batches:
-        app_instance.log_message("Warnung: Weniger Farben als Batches. Farben werden wiederverwendet.")
-        color_list = (color_list * (num_batches // len(color_list) + 1))[:num_batches]
-    if len(marker_list) < num_batches:
-        app_instance.log_message("Warnung: Weniger Marker als Batches. Marker werden wiederverwendet.")
-        marker_list = (marker_list * (num_batches // len(marker_list) + 1))[:num_batches]
-
-    # Bestimme die Anzahl der Subplots
-    num_plots = 0
-    if ce_graph_bool:
-        num_plots += 1
-    if charge_graph_bool or discharge_graph_bool:
-        num_plots += 1
-
-    # Erstelle die Subplots basierend auf der Auswahl
-    fig, axs = plt.subplots(nrows=num_plots, ncols=1, figsize=(7, 5), squeeze=False)
-
-    ax_index = 0
-    ce_ax = None
-    capacity_ax = None
-
-    # Plotten des CE-Graphen
-    if ce_graph_bool:
-        ce_ax = axs[ax_index][0]
-        for counter_var in range(0, different_batches):
-            ce_ax.errorbar(coulombic_efficency['Cycle'],
-                           coulombic_efficency[f'{data_file_names[cell_numeration[counter_var]]} mean'],
-                           coulombic_efficency[f'{data_file_names[cell_numeration[counter_var]]} stddev'],
-                           capsize=2.5, errorevery=10, marker=marker_list[counter_var],
-                           markersize=6, color=color_list[counter_var])
-        ce_ax.set_xlim(0, max_cycle_ce + 1)
-        ce_ax.set_ylabel('CE [%]')
-        ce_ax.set_ylim(98, 102)
-        ce_ax.grid()
-        ax_index += 1
-
-    # Plotten des Kapazitäts-Graphen
-    if charge_graph_bool or discharge_graph_bool:
-        capacity_ax = axs[ax_index][0]
-        for counter_var in range(0, different_batches):
-            label_suffix = ""
-            if charge_graph_bool and discharge_graph_bool:
-                label_suffix = " (Entladung)"
-            elif charge_graph_bool:
-                label_suffix = " (Ladung)"
-
-            if discharge_graph_bool:
-                capacity_ax.errorbar(specific_discharge_capacity['Cycle'],
-                                     specific_discharge_capacity[
-                                         f'{data_file_names[cell_numeration[counter_var]]} mean discharge capacity'],
-                                     specific_discharge_capacity[
-                                         f'{data_file_names[cell_numeration[counter_var]]} stddev'],
-                                     label=legend_list[counter_var] + label_suffix, capsize=2.5,
-                                     marker=marker_list[counter_var],
-                                     color=color_list[counter_var], markersize=6, errorevery=10)
-
-            if charge_graph_bool:
-                capacity_ax.errorbar(specific_charge_capacity['Cycle'],
-                                     specific_charge_capacity[
-                                         f'{data_file_names[cell_numeration[counter_var]]} mean charge capacity'],
-                                     specific_charge_capacity[
-                                         f'{data_file_names[cell_numeration[counter_var]]} stddev'],
-                                     label=legend_list[counter_var] + " (Ladung)", capsize=2.5,
-                                     marker=marker_list[counter_var],
-                                     color=color_list[counter_var], markersize=6, linestyle='--', errorevery=10)
-
-        capacity_ax.set_xlabel('Cycle')
-        capacity_ax.set_ylabel('Kapazität [mAh $\\ g^{-1}$]')
-        capacity_ax.legend(fontsize=12, loc=0)
-        capacity_ax.set_xlim(0, max_cycle_dis + 1)
-        capacity_ax.set_ylim(bottom=0)
-        capacity_ax.grid()
-
-    # Anpassen des Layouts und Speichern der Achsen
-    if num_plots == 2:
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        axs[0][0].set_xticklabels([])
-        fig.suptitle('Kapazitäts- und CE-Verlauf')
-    elif ce_graph_bool:
-        plt.tight_layout()
-        fig.suptitle('CE-Verlauf')
-    elif charge_graph_bool or discharge_graph_bool:
-        plt.tight_layout()
-        fig.suptitle('Kapazitäts-Verlauf')
-
-    app_instance.current_axes = [ce_ax, capacity_ax] if ce_graph_bool and (
-                charge_graph_bool or discharge_graph_bool) else [ce_ax] if ce_graph_bool else [capacity_ax]
-
-    # Speichern der Graphen und Daten
-    app_instance.log_message("Graph erfolgreich erstellt. Versuche, die Daten zu speichern...")
-    try:
-        # Erstelle den Ordner, falls er nicht existiert
-        save_dir = data_path.parent
-        save_dir.mkdir(parents=True, exist_ok=True)
-
-        plt.savefig(os.path.join(str(save_dir), data_path.parts[-2]))
-        plt.savefig(os.path.join(str(save_dir), str(str(data_path.name) + '_' + str(data_path.parts[-2]) + '.svg')))
-        plt.savefig(os.path.join(str(save_dir), str(str(data_path.name) + '_' + str(data_path.parts[-2]))))
-
-        # Speichern des gesamten Matplotlib-Figure-Objekts für die spätere Bearbeitung
-        pickle_file_path = os.path.join(str(save_dir), data_path.parts[-2] + '_plot_data.pickle')
-        pickle.dump(fig, open(pickle_file_path, 'wb'))
-        app_instance.log_message(f"Plot-Objekt als Pickle-Datei gespeichert: {pickle_file_path}")
-
-    except Exception as e:
-        app_instance.log_message(f"Warnung: Das Speichern der Plot-Dateien ist fehlgeschlagen. Fehler: {e}")
-
-    # Speichern der Daten in eine .txt-Datei
-    save_file_name = os.path.join(str(data_path.parent),
-                                  str(str(data_path.name) + '_' + str(data_path.parts[-2]) + '.txt'))
-    df_to_save = specific_discharge_capacity.copy()
-    if ce_graph_bool:
-        ce_cols_to_add = [col for col in coulombic_efficency.columns if 'mean' in col or 'stddev' in col]
-        for col in ce_cols_to_add:
-            df_to_save[col + ' CE'] = coulombic_efficency[col]
-
-    try:
-        df_to_save.to_csv(save_file_name, sep=',', index=False)
-        app_instance.log_message(f"Daten wurden in {save_file_name} gespeichert.")
-    except Exception as e:
-        app_instance.log_message(f"Warnung: Das Speichern der CSV-Datei ist fehlgeschlagen. Fehler: {e}")
-
-    # Entferne den alten Plot und erstelle einen neuen Canvas im GUI
-    app_instance.plot_frame.pack_forget()
-    app_instance.plot_frame = Frame(app_instance.root)
-    app_instance.plot_frame.grid(row=8, column=0, columnspan=4, padx=10, pady=5, sticky="nsew")
-
-    canvas = FigureCanvasTkAgg(fig, master=app_instance.plot_frame)
-    canvas.draw()
-    canvas.get_tk_widget().pack(side='top', fill='both', expand=1)
-
-    toolbar = NavigationToolbar2Tk(canvas, app_instance.plot_frame)
-    toolbar.update()
-    canvas.get_tk_widget().pack(side='top', fill='both', expand=1)
-
-    app_instance.current_figure = fig
-    app_instance.edit_plot_button.config(state=NORMAL)
-    app_instance.log_message("Plot-Objekt wurde in der GUI angezeigt.")
-    plt.close(fig)  # Schließt die redundante Matplotlib-Fenster
-
-
-# --- GUI-Setup mit Tkinter ---
-class EchemPlotterApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Electrochemical Data Plotter")
-        self.root.grid_columnconfigure(0, weight=1)
-        self.root.grid_columnconfigure(1, weight=1)
-        self.root.grid_columnconfigure(2, weight=1)
-        self.root.grid_columnconfigure(3, weight=1)
-
-        # Variablen für die Pfade
-        self.data_path = StringVar()
-        self.dictionary_path = StringVar()
-        self.different_batches_var = StringVar()
-        self.number_of_cells_var = StringVar()
-        self.ce_graph_var = BooleanVar()
-        self.charge_graph_var = BooleanVar()
-        self.discharge_graph_var = BooleanVar(value=True)  # Entladekapazität ist standardmäßig ausgewählt
-        self.color_list_var = StringVar(
-            value='tab:blue, tab:orange, tab:green, tab:red, tab:purple, tab:brown, tab:pink, tab:gray, tab:olive, tab:cyan')
-        self.marker_list_var = StringVar(value='o, v, ^, <, >, s, p, 2, 3, 4, 8, s, p, P, *, h, H, +, x, X, D, d, |, _')
-
-        self.current_figure = None
-        self.current_axes = None
-
-        self.setup_ui()
-
-    def setup_ui(self):
-        # Eingabebereich für Datenpfad
-        Label(self.root, text="Datenverzeichnis auswählen:").grid(row=0, column=0, sticky='w', padx=10, pady=5)
-        Button(self.root, text="Durchsuchen...", command=self.select_data_folder).grid(row=0, column=1, padx=10, pady=5)
-        Label(self.root, textvariable=self.data_path, width=40).grid(row=0, column=2, padx=10, pady=5)
-
-        # Eingabebereich für Dictionary-Datei
-        Label(self.root, text="Dictionary-Datei auswählen:").grid(row=1, column=0, sticky='w', padx=10, pady=5)
-        Button(self.root, text="Durchsuchen...", command=self.select_dictionary_file).grid(row=1, column=1, padx=10,
-                                                                                           pady=5)
-        Label(self.root, textvariable=self.dictionary_path, width=40).grid(row=1, column=2, padx=10, pady=5)
-
-        # Neuer Button für das Bearbeiten des Dictionarys
-        self.edit_dict_button = Button(self.root, text="Dictionary anzeigen & bearbeiten",
-                                       command=self.open_dictionary_editor, state=DISABLED)
-        self.edit_dict_button.grid(row=1, column=3, padx=10, pady=5)
-
-        # Eingabebereich für Anzahl Batches
-        Label(self.root, text="Anzahl verschiedener Batches:").grid(row=2, column=0, sticky='w', padx=10, pady=5)
-        self.batches_entry = Entry(self.root, textvariable=self.different_batches_var)
-        self.batches_entry.grid(row=2, column=1, columnspan=2, sticky='we', padx=10, pady=5)
-
-        # Eingabebereich für Anzahl der Zellen pro Batch
-        Label(self.root, text="Anzahl der Zellen pro Batch (z.B. 2,1,3):").grid(row=3, column=0, sticky='w', padx=10,
-                                                                                pady=5)
-        self.cells_entry = Entry(self.root, textvariable=self.number_of_cells_var)
-        self.cells_entry.grid(row=3, column=1, columnspan=2, sticky='we', padx=10, pady=5)
-
-        # Eingabebereich für Farben und Marker
-        Label(self.root, text="Farben (kommasep.):").grid(row=4, column=0, sticky='w', padx=10, pady=5)
-        self.colors_entry = Entry(self.root, textvariable=self.color_list_var)
-        self.colors_entry.grid(row=4, column=1, columnspan=3, sticky='we', padx=10, pady=5)
-        Label(self.root, text="Marker (kommasep.):").grid(row=5, column=0, sticky='w', padx=10, pady=5)
-        self.markers_entry = Entry(self.root, textvariable=self.marker_list_var)
-        self.markers_entry.grid(row=5, column=1, columnspan=3, sticky='we', padx=10, pady=5)
-
-        # Checkboxen für die Plot-Optionen
-        Label(self.root, text="Graphen-Typen:").grid(row=6, column=0, sticky='w', padx=10, pady=5)
-        Checkbutton(self.root, text="Entladekapazität anzeigen", variable=self.discharge_graph_var).grid(row=6,
-                                                                                                         column=1,
-                                                                                                         sticky='w',
-                                                                                                         padx=10,
-                                                                                                         pady=5)
-        Checkbutton(self.root, text="Ladekapazität anzeigen", variable=self.charge_graph_var).grid(row=6, column=2,
-                                                                                                   sticky='w', padx=10,
-                                                                                                   pady=5)
-        Checkbutton(self.root, text="CE-Diagramm anzeigen", variable=self.ce_graph_var).grid(row=6, column=3,
-                                                                                             sticky='w', padx=10,
-                                                                                             pady=5)
-
-        # Plot-Buttons
-        Button(self.root, text="Start Plotting", command=self.run_plotting).grid(row=7, column=0, columnspan=2, pady=10)
-        self.edit_plot_button = Button(self.root, text="Plot-Eigenschaften bearbeiten", command=self.open_plot_editor,
-                                       state=DISABLED)
-        self.edit_plot_button.grid(row=7, column=2, columnspan=2, pady=10)
-
-        # Frame für den Matplotlib-Plot
-        self.plot_frame = Frame(self.root, bg="white", borderwidth=2, relief="groove")
-        self.plot_frame.grid(row=8, column=0, columnspan=4, padx=10, pady=5, sticky="nsew")
-        self.root.grid_rowconfigure(8, weight=1)
-
-        # Log-Bereich
-        Label(self.root, text="Debugging-Protokoll:").grid(row=9, column=0, sticky='w', padx=10, pady=5)
-        self.log_text = scrolledtext.ScrolledText(self.root, height=10, width=80)
-        self.log_text.grid(row=10, column=0, columnspan=4, padx=10, pady=5, sticky='nsew')
-        self.root.grid_rowconfigure(10, weight=1)
-
-    def select_data_folder(self):
-        folder_selected = filedialog.askdirectory()
-        if folder_selected:
-            self.data_path.set(folder_selected)
-
-    def select_dictionary_file(self):
-        file_selected = filedialog.askopenfilename(defaultextension=".txt",
-                                                   filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
-        if file_selected:
-            self.dictionary_path.set(file_selected)
-            self.edit_dict_button.config(state=NORMAL)  # Aktiviert den Bearbeiten-Button
-
-    def log_message(self, message):
-        """Fügt eine Nachricht zum Textfeld hinzu."""
-        self.log_text.insert(END, message + "\n")
-        self.log_text.see(END)  # Scrollt automatisch zum Ende
-
-    def open_dictionary_editor(self):
-        """Öffnet ein neues Fenster zum Bearbeiten des Dictionarys."""
-        dict_file_path = self.dictionary_path.get()
-        if not dict_file_path:
-            messagebox.showwarning("Fehlende Datei", "Bitte zuerst eine Dictionary-Datei auswählen.")
-            return
-
-        editor_window = Toplevel(self.root)
-        editor_window.title("Dictionary-Editor")
-
-        # Lade den Inhalt der Datei
+    # Export data to NetCDF format for each batch
+    # NetCDF is a self-describing, machine-independent data format for array-oriented scientific data
+    plot_name = 'cap-vs-cycle_' + str(data_path.parts[-2])
+    parent_dir = Path(data_path).parent
+    
+    for counter_var in range(0, different_batches):
         try:
-            with open(dict_file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
+            # Extract batch information from the legend and file names
+            batch_name = legend_list[counter_var].strip()
+            batch_name_part = data_file_names[cell_numeration[counter_var]]
+            
+            # Create an xarray Dataset structure
+            # This organizes the data into a self-describing dataset with:
+            # - Variables: The actual data arrays (discharge/charge capacities and CE)
+            # - Coordinates: The cycle numbers that index these arrays
+            # - Attributes: Metadata about units and data provenance
+            ds = xr.Dataset(
+                {
+                    # Main capacity measurements with their standard deviations
+                    'discharge_capacity': (['cycle'], specific_discharge_capacity[f'{batch_name_part} mean discharge capacity'].values),
+                    'discharge_capacity_std': (['cycle'], specific_discharge_capacity[f'{batch_name_part} stddev discharge capacity'].values),
+                    'charge_capacity': (['cycle'], specific_charge_capacity[f'{batch_name_part} mean charge capacity'].values),
+                    'charge_capacity_std': (['cycle'], specific_charge_capacity[f'{batch_name_part} stddev charge capacity'].values),
+                    # Coulombic efficiency data
+                    'coulombic_efficiency': (['cycle'], coulombic_efficiency[f'{batch_name_part} mean'].values),
+                    'coulombic_efficiency_std': (['cycle'], coulombic_efficiency[f'{batch_name_part} stddev'].values),
+                },
+                coords={
+                    # Cycle numbers as coordinate variable
+                    'cycle': ('cycle', np.arange(1, max_len + 1)),
+                }
+            )
+
+            # Add metadata attributes to the dataset
+            # These help users understand the data's context and units
+            ds.discharge_capacity.attrs['units'] = 'mAh/g'  # Specific capacity units
+            ds.charge_capacity.attrs['units'] = 'mAh/g'     # Specific capacity units
+            ds.coulombic_efficiency.attrs['units'] = '%'    # CE as percentage
+            
+            # Record batch information and source files
+            ds.attrs['batch_name'] = batch_name  # Name from the legend dictionary
+            ds.attrs['data_files'] = ', '.join(data_file_names[cell_numeration[counter_var]:cell_numeration[counter_var + 1]])  # Original data files
+
+            # Save the dataset as a NetCDF file
+            # The file name includes both the experiment name and batch identifier
+            netcdf_name = os.path.join(str(parent_dir), f'{plot_name}_{batch_name.strip()}.nc')
+            ds.to_netcdf(netcdf_name)
+            print(f"NetCDF file saved: {netcdf_name}")
+
         except Exception as e:
-            messagebox.showerror("Fehler", f"Konnte Datei nicht laden: {e}")
-            editor_window.destroy()
+            # Log any errors but continue processing other batches
+            print(f"Warning: Failed to create NetCDF for batch {batch_name}: {e}")
+            continue
+
+    max_cycle_dis = specific_discharge_capacity.shape[0]
+    max_cycle_ce = coulombic_efficiency.shape[0]
+
+    # --- Plotting execution ---
+    # Store the original matplotlib settings
+    original_font_family = plt.rcParams['font.family']
+    
+    # Create custom font dictionaries
+    legend_font = {
+        'size': legend_font_size if legend_font_size else '12',
+        'family': legend_font_family if legend_font_family != "default" else None
+    }
+    
+    axis_label_font = {
+        'size': axis_label_font_size if axis_label_font_size else '13',
+        'family': axis_label_font_family if axis_label_font_family != "default" else None
+    }
+    
+    tick_label_font = {
+        'size': tick_label_font_size if tick_label_font_size else '12',
+        'family': tick_label_font_family if tick_label_font_family != "default" else None
+    }
+
+    if ce_graph.lower() == 'yes':
+        fig, axs = plt.subplots(nrows=2, ncols=1, gridspec_kw={'height_ratios': [1, 3]}, figsize=(7, 5))
+        
+        # Apply font settings to both axes
+        for ax in axs:
+            ax.tick_params(axis='both', which='major', labelsize=tick_label_font['size'])
+            if tick_label_font['family']:
+                for label in ax.get_xticklabels() + ax.get_yticklabels():
+                    label.set_family(tick_label_font['family'])
+
+        # Individual cell plots for Capacity
+        if plot_individual_cells.lower() == 'yes':
+            for counter_var in range(0, len(data_file_names)):
+                label_prefix = f'Cell {counter_var + 1}'
+                if individual_cell_legend_suffix:
+                    label_prefix += f' {individual_cell_legend_suffix}'
+
+                if capacity_plot_mode in ['discharge', 'both']:
+                    axs[1].plot(specific_discharge_capacity['Cycle'],
+                                specific_discharge_capacity[f'{data_file_names[counter_var]} DisCap'],
+                                label=f'{label_prefix} (Discharge)' if capacity_plot_mode == 'both' else label_prefix,
+                                linestyle='-',
+                                marker='.',
+                                alpha=0.3
+                                )
+                if capacity_plot_mode in ['charge', 'both']:
+                    axs[1].plot(specific_charge_capacity['Cycle'],
+                                specific_charge_capacity[f'{data_file_names[counter_var]} ChCap'],
+                                label=f'{label_prefix} (Charge)' if capacity_plot_mode == 'both' else label_prefix,
+                                linestyle='--',
+                                marker='.',
+                                alpha=0.3
+                                )
+
+        # Mean and stddev plots for Capacity
+        for counter_var in range(0, different_batches):
+            if capacity_plot_mode in ['discharge', 'both']:
+                label_dis = f'{legend_list[counter_var]} (Discharge)' if capacity_plot_mode == 'both' else f'{legend_list[counter_var]}'
+                axs[1].errorbar(specific_discharge_capacity['Cycle'],
+                                specific_discharge_capacity[
+                                    '{} mean discharge capacity'.format(data_file_names[cell_numeration[counter_var]])],
+                                specific_discharge_capacity[
+                                    '{} stddev discharge capacity'.format(
+                                        data_file_names[cell_numeration[counter_var]])],
+                                label=label_dis
+                                , capsize=2.5
+                                , marker=marker_list[counter_var % len(marker_list)]
+                                , color=color_list[counter_var % len(color_list)]
+                                , markersize=6
+                                #, errorevery=10
+                                )
+
+            if capacity_plot_mode in ['charge', 'both']:
+                label_ch = f'{legend_list[counter_var]} (Charge)' if capacity_plot_mode == 'both' else f'{legend_list[counter_var]}'
+                axs[1].errorbar(specific_charge_capacity['Cycle'],
+                                specific_charge_capacity[
+                                    '{} mean charge capacity'.format(data_file_names[cell_numeration[counter_var]])],
+                                specific_charge_capacity[
+                                    '{} stddev charge capacity'.format(data_file_names[cell_numeration[counter_var]])],
+                                label=label_ch
+                                , capsize=2.5
+                                , marker=marker_list[counter_var % len(marker_list)]
+                                , color=color_list[counter_var % len(color_list)]
+                                , linestyle='--'
+                                , fillstyle='none'
+                                , markersize=6
+                                #, errorevery=10
+                                )
+
+        # Plots for CE
+        for counter_var in range(0, different_batches):
+            axs[0].errorbar(coulombic_efficiency['Cycle'],
+                            coulombic_efficiency['{} mean'.format(data_file_names[cell_numeration[counter_var]])],
+                            coulombic_efficiency['{} stddev'.format(data_file_names[cell_numeration[counter_var]])],
+                            capsize=2.5
+                            #, errorevery=10
+                            , marker=marker_list[counter_var % len(marker_list)]
+                            , markersize=6
+                            , color=color_list[counter_var % len(color_list)]
+                            )
+
+        # Apply capacity plot settings
+        axs[1].set_title(capacity_plot_title, fontsize=axis_label_font['size'], fontfamily=axis_label_font['family'])
+        axs[1].set_xlabel('Cycle', fontsize=axis_label_font['size'], fontfamily=axis_label_font['family'])
+        axs[1].set_ylabel(capacity_ylabel_text, fontsize=axis_label_font['size'], fontfamily=axis_label_font['family'])
+        axs[1].legend(fontsize=legend_font['size'], loc=0, prop={'family': legend_font['family']})
+        axs[1].grid()
+        if capacity_xmin is not None and capacity_xmax is not None:
+            axs[1].set_xlim(capacity_xmin, capacity_xmax)
+        if capacity_ymin is not None and capacity_ymax is not None:
+            axs[1].set_ylim(capacity_ymin, capacity_ymax)
+        #axs[1].autoscale(enable=True, axis='both', tight=True)
+
+        # Apply CE plot settings
+        axs[0].set_title(ce_plot_title, fontsize=axis_label_font['size'], fontfamily=axis_label_font['family'])
+        axs[0].set_ylabel(ce_ylabel_text, fontsize=axis_label_font['size'], fontfamily=axis_label_font['family'])
+        axs[0].grid()
+        axs[0].set_xticklabels([])
+        if ce_xmin is not None and ce_xmax is not None:
+            axs[0].set_xlim(ce_xmin, ce_xmax)
+        if ce_ymin is not None and ce_ymax is not None:
+            axs[0].set_ylim(ce_ymin, ce_ymax)
+        #axs[0].autoscale(enable=True, axis='both', tight=True)
+
+        plt.tight_layout()
+
+        # Save figures and data before displaying (os._exit after show would prevent saving)
+        try:
+            plot_name = 'cap-vs-cycle_' + str(data_path.parts[-2])
+            parent_dir = Path(data_path).parent
+
+            plt.savefig(os.path.join(str(parent_dir), plot_name))
+            plt.savefig(os.path.join(str(parent_dir), str(f'{plot_name}.svg')))
+            plt.savefig(os.path.join(str(parent_dir), str(f'{plot_name}.pdf')))
+            pickle.dump(fig, open((os.path.join(str(parent_dir), plot_name) + '.pickle'), 'wb'))
+
+            save_file_name = os.path.join(str(parent_dir), str(f'{plot_name}.txt'))
+
+            df_to_save = pd.DataFrame({'Cycle': np.arange(1, max_len + 1)})
+
+            for counter_var in range(0, different_batches):
+                batch_name_part = data_file_names[cell_numeration[counter_var]]
+                df_to_save[f'{batch_name_part} mean discharge capacity'] = specific_discharge_capacity[
+                    f'{batch_name_part} mean discharge capacity']
+                df_to_save[f'{batch_name_part} stddev discharge capacity'] = specific_discharge_capacity[
+                    f'{batch_name_part} stddev discharge capacity']
+                df_to_save[f'{batch_name_part} mean charge capacity'] = specific_charge_capacity[
+                    f'{batch_name_part} mean charge capacity']
+                df_to_save[f'{batch_name_part} stddev charge capacity'] = specific_charge_capacity[
+                    f'{batch_name_part} stddev charge capacity']
+                df_to_save[f'{batch_name_part} mean CE'] = coulombic_efficiency[f'{batch_name_part} mean']
+                df_to_save[f'{batch_name_part} stddev CE'] = coulombic_efficiency[f'{batch_name_part} stddev']
+
+            df_to_save.to_csv(save_file_name, sep=',', index=False, na_rep='')
+            print(f"Data has been saved to {save_file_name}.")
+        except Exception as e:
+            messagebox.showerror("Error while Saving", f"An error occurred while saving the results: {e}")
             return
 
-        Label(editor_window, text=f"Bearbeiten von: {os.path.basename(dict_file_path)}").pack(pady=5)
-        editor_text = Text(editor_window, width=80, height=20)
-        editor_text.pack(padx=10, pady=5)
-        editor_text.insert(END, content)
-
-        def save_and_close():
-            """Speichert den bearbeiteten Inhalt und schließt das Fenster."""
-            new_content = editor_text.get("1.0", END)
+        messagebox.showinfo("Success", "Plotting completed successfully. The graphs will now be displayed.")
+        plt.show()
+        # Close only figure windows and return to the GUI. If user explicitly requests
+        # the app to close, perform a graceful quit/destroy.
+        try:
+            plt.close('all')
+        except Exception:
+            pass
+        if close_app_on_plot_close:
             try:
-                # Prüfen, ob der Inhalt ein gültiges Dictionary ist
-                ast.literal_eval(new_content)
-                with open(dict_file_path, 'w', encoding='utf-8') as f:
-                    f.write(new_content)
-                self.log_message("Dictionary erfolgreich gespeichert.")
-                editor_window.destroy()
-            except (ValueError, SyntaxError) as e:
-                messagebox.showerror("Speicherfehler",
-                                     f"Ungültiges Dictionary-Format. Bitte korrigieren Sie es. Fehler: {e}")
+                app_obj = globals().get('app', None)
+                if app_obj is not None:
+                    try:
+                        app_obj.quit()
+                    except Exception:
+                        pass
+                    try:
+                        app_obj.destroy()
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        root = tk._default_root
+                        if root is not None:
+                            try:
+                                root.quit()
+                            except Exception:
+                                pass
+                            try:
+                                root.destroy()
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        return
 
-        save_button = Button(editor_window, text="Speichern & Schließen", command=save_and_close)
-        save_button.pack(pady=5)
+    else:
+        fig, ax = plt.subplots(nrows=1, ncols=1)
 
-        cancel_button = Button(editor_window, text="Abbrechen", command=editor_window.destroy)
-        cancel_button.pack(pady=5)
+        # Individual cell plots for Capacity (if selected)
+        if plot_individual_cells.lower() == 'yes':
+            for counter_var in range(0, len(data_file_names)):
+                label_prefix = f'Cell {counter_var + 1}'
+                if individual_cell_legend_suffix:
+                    label_prefix += f' {individual_cell_legend_suffix}'
 
-    def open_plot_editor(self):
-        """Öffnet ein neues Fenster zum Bearbeiten der Plot-Eigenschaften."""
-        if self.current_figure is None:
-            messagebox.showwarning("Kein Plot geladen", "Bitte zuerst einen Plot erstellen oder laden.")
+                if capacity_plot_mode in ['discharge', 'both']:
+                    ax.plot(specific_discharge_capacity['Cycle'],
+                            specific_discharge_capacity[f'{data_file_names[counter_var]} DisCap'],
+                            label=f'{label_prefix} (Discharge)' if capacity_plot_mode == 'both' else label_prefix,
+                            linestyle='-',
+                            marker='.',
+                            alpha=0.3
+                            )
+                if capacity_plot_mode in ['charge', 'both']:
+                    ax.plot(specific_charge_capacity['Cycle'],
+                            specific_charge_capacity[f'{data_file_names[counter_var]} ChCap'],
+                            label=f'{label_prefix} (Charge)' if capacity_plot_mode == 'both' else label_prefix,
+                            linestyle='--',
+                            marker='.',
+                            alpha=0.3
+                            )
+
+        # Mean and stddev plots for Capacity
+        for counter_var in range(0, different_batches):
+            if capacity_plot_mode in ['discharge', 'both']:
+                label_dis = f'{legend_list[counter_var]} (Discharge)' if capacity_plot_mode == 'both' else f'{legend_list[counter_var]}'
+                ax.errorbar(specific_discharge_capacity['Cycle'],
+                            specific_discharge_capacity[
+                                '{} mean discharge capacity'.format(data_file_names[cell_numeration[counter_var]])],
+                            specific_discharge_capacity[
+                                '{} stddev discharge capacity'.format(data_file_names[cell_numeration[counter_var]])],
+                            label=label_dis
+                            , capsize=2.5
+                            , marker=marker_list[counter_var % len(marker_list)]
+                            , color=color_list[counter_var % len(color_list)]
+                            )
+
+            if capacity_plot_mode in ['charge', 'both']:
+                label_ch = f'{legend_list[counter_var]} (Charge)' if capacity_plot_mode == 'both' else f'{legend_list[counter_var]}'
+                ax.errorbar(specific_charge_capacity['Cycle'],
+                            specific_charge_capacity[
+                                '{} mean charge capacity'.format(data_file_names[cell_numeration[counter_var]])],
+                            specific_charge_capacity[
+                                '{} stddev charge capacity'.format(data_file_names[cell_numeration[counter_var]])],
+                            label=label_ch
+                            , capsize=2.5
+                            , marker=marker_list[counter_var % len(marker_list)]
+                            , color=color_list[counter_var % len(color_list)]
+                            , linestyle='--'
+                            , fillstyle='none'
+                            )
+
+        # Apply capacity plot settings
+        ax.set_title(capacity_plot_title, fontsize=axis_label_font['size'], fontfamily=axis_label_font['family'])
+        ax.set_xlabel('Cycle', fontsize=axis_label_font['size'], fontfamily=axis_label_font['family'])
+        ax.set_ylabel(capacity_ylabel_text, fontsize=axis_label_font['size'], fontfamily=axis_label_font['family'])
+        ax.legend(fontsize=legend_font['size'], loc=0, prop={'family': legend_font['family']})
+        ax.grid()
+        if capacity_xmin is not None and capacity_xmax is not None:
+            ax.set_xlim(capacity_xmin, capacity_xmax)
+        if capacity_ymin is not None and capacity_ymax is not None:
+            ax.set_ylim(capacity_ymin, capacity_ymax)
+        
+        # Apply tick label font settings
+            ax.tick_params(axis='both', which='major', labelsize=tick_label_font['size'])
+            if tick_label_font['family']:
+                for label in ax.get_xticklabels() + ax.get_yticklabels():
+                    label.set_family(tick_label_font['family'])
+            #ax.autoscale(enable=True, axis='both', tight=True)        plt.tight_layout()
+
+        # Save figures and data before displaying (os._exit after show would prevent saving)
+        try:
+            plot_name = 'cap-vs-cycle_' + str(data_path.parts[-2])
+            parent_dir = Path(data_path).parent
+
+            plt.savefig(os.path.join(str(parent_dir), plot_name))
+            plt.savefig(os.path.join(str(parent_dir), str(f'{plot_name}.svg')))
+            plt.savefig(os.path.join(str(parent_dir), str(f'{plot_name}.pdf')))
+            pickle.dump(fig, open((os.path.join(str(parent_dir), plot_name) + '.pickle'), 'wb'))
+
+            save_file_name = os.path.join(str(parent_dir), str(f'{plot_name}.txt'))
+
+            df_to_save = pd.DataFrame({'Cycle': np.arange(1, max_len + 1)})
+
+            for counter_var in range(0, different_batches):
+                batch_name_part = data_file_names[cell_numeration[counter_var]]
+                df_to_save[f'{batch_name_part} mean discharge capacity'] = specific_discharge_capacity[
+                    f'{batch_name_part} mean discharge capacity']
+                df_to_save[f'{batch_name_part} stddev discharge capacity'] = specific_discharge_capacity[
+                    f'{batch_name_part} stddev discharge capacity']
+                df_to_save[f'{batch_name_part} mean charge capacity'] = specific_charge_capacity[
+                    f'{batch_name_part} mean charge capacity']
+                df_to_save[f'{batch_name_part} stddev charge capacity'] = specific_charge_capacity[
+                    f'{batch_name_part} stddev charge capacity']
+                df_to_save[f'{batch_name_part} mean CE'] = coulombic_efficiency[f'{batch_name_part} mean']
+                df_to_save[f'{batch_name_part} stddev CE'] = coulombic_efficiency[f'{batch_name_part} stddev']
+
+            df_to_save.to_csv(save_file_name, sep=',', index=False, na_rep='')
+            print(f"Data has been saved to {save_file_name}.")
+        except Exception as e:
+            messagebox.showerror("Error while Saving", f"An error occurred while saving the results: {e}")
             return
 
-        editor_window = Toplevel(self.root)
-        editor_window.title("Plot-Eigenschaften bearbeiten")
-
-        # Variablen für die Eingabefelder
-        title_var = StringVar(value=self.current_figure.get_suptitle())
-        xlabel_var = StringVar(value=self.current_axes[-1].get_xlabel())
-        ylabel_var = StringVar(value=self.current_axes[-1].get_ylabel())
-
-        # Behandelt den Fall mit zwei Subplots für CE
-        if len(self.current_axes) > 1:
-            ce_ylabel_var = StringVar(value=self.current_axes[0].get_ylabel())
-
-        xmin_var = StringVar(value=str(self.current_axes[-1].get_xlim()[0]))
-        xmax_var = StringVar(value=str(self.current_axes[-1].get_xlim()[1]))
-        ymin_var = StringVar(value=str(self.current_axes[-1].get_ylim()[0]))
-        ymax_var = StringVar(value=str(self.current_axes[-1].get_ylim()[1]))
-
-        # UI-Elemente
-        Label(editor_window, text="Titel:").grid(row=0, column=0, padx=5, pady=2, sticky='e')
-        Entry(editor_window, textvariable=title_var).grid(row=0, column=1, padx=5, pady=2, sticky='we')
-
-        Label(editor_window, text="X-Achse Label:").grid(row=1, column=0, padx=5, pady=2, sticky='e')
-        Entry(editor_window, textvariable=xlabel_var).grid(row=1, column=1, padx=5, pady=2, sticky='we')
-
-        Label(editor_window, text="Y-Achse Label:").grid(row=2, column=0, padx=5, pady=2, sticky='e')
-        Entry(editor_window, textvariable=ylabel_var).grid(row=2, column=1, padx=5, pady=2, sticky='we')
-
-        if len(self.current_axes) > 1:
-            Label(editor_window, text="CE-Achse Y-Label:").grid(row=3, column=0, padx=5, pady=2, sticky='e')
-            Entry(editor_window, textvariable=ce_ylabel_var).grid(row=3, column=1, padx=5, pady=2, sticky='we')
-
-        Label(editor_window, text="X-Achse Limits (Min, Max):").grid(row=4, column=0, padx=5, pady=2, sticky='e')
-        Entry(editor_window, textvariable=xmin_var).grid(row=4, column=1, padx=5, pady=2, sticky='we')
-        Entry(editor_window, textvariable=xmax_var).grid(row=4, column=2, padx=5, pady=2, sticky='we')
-
-        Label(editor_window, text="Y-Achse Limits (Min, Max):").grid(row=5, column=0, padx=5, pady=2, sticky='e')
-        Entry(editor_window, textvariable=ymin_var).grid(row=5, column=1, padx=5, pady=2, sticky='we')
-        Entry(editor_window, textvariable=ymax_var).grid(row=5, column=2, padx=5, pady=2, sticky='we')
-
-        def apply_changes():
+        messagebox.showinfo("Success", "Plotting completed successfully. The graphs will now be displayed.")
+        plt.show()
+        # Graceful cleanup: close figures and attempt to quit/destroy the Tk root, then return
+        try:
+            plt.close('all')
+        except Exception:
+            pass
+        if close_app_on_plot_close:
             try:
-                # Anwenden der Änderungen
-                self.current_figure.suptitle(title_var.get())
-                self.current_axes[-1].set_xlabel(xlabel_var.get())
-                self.current_axes[-1].set_ylabel(ylabel_var.get())
+                app_obj = globals().get('app', None)
+                if app_obj is not None:
+                    try:
+                        app_obj.quit()
+                    except Exception:
+                        pass
+                    try:
+                        app_obj.destroy()
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        root = tk._default_root
+                        if root is not None:
+                            try:
+                                root.quit()
+                            except Exception:
+                                pass
+                            try:
+                                root.destroy()
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        return
 
-                if len(self.current_axes) > 1:
-                    self.current_axes[0].set_ylabel(ce_ylabel_var.get())
+    # Saving is handled before displaying the plots so the process can exit cleanly afterwards.
 
-                new_xmin = float(xmin_var.get())
-                new_xmax = float(xmax_var.get())
-                new_ymin = float(ymin_var.get())
-                new_ymax = float(ymax_var.get())
 
-                for ax in self.current_axes:
-                    ax.set_xlim(new_xmin, new_xmax)
-                    ax.set_ylim(new_ymin, new_ymax)
+# --- GUI Application Class ---
+class PlottingGUI(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Advanced Plotting Tool")
+        self.geometry("1000x800")
 
-                self.current_figure.canvas.draw()
-                self.log_message("Plot-Eigenschaften erfolgreich aktualisiert.")
-                editor_window.destroy()
+        self.settings_file = "last_used_settings.pkl"
+        self.default_dict_file = "dictionary_HIPOLE.txt"
+        self.default_data_path = r"C:\Users\ro45vij\Desktop\AA_Data-Processing\AA_Plotting\E5_Vergleich_Swagelok-CC\data"
 
-            except ValueError:
-                messagebox.showerror("Eingabefehler", "Ungültiges Format für Achsenlimits. Bitte nur Zahlen verwenden.")
+        self.create_widgets()
+        self.load_settings()
 
-        Button(editor_window, text="Übernehmen", command=apply_changes).grid(row=6, column=0, columnspan=3, pady=10)
+    def create_widgets(self):
+        # Create a notebook (tabbed interface)
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(expand=True, fill='both', padx=10, pady=10)
 
-    def run_plotting(self):
-        data_path = self.data_path.get()
-        dictionary_path = self.dictionary_path.get()
-        different_batches = self.different_batches_var.get()
-        number_of_cells = self.number_of_cells_var.get()
-        charge_graph = self.charge_graph_var.get()
-        discharge_graph = self.discharge_graph_var.get()
-        ce_graph = self.ce_graph_var.get()
-        color_list_str = self.color_list_var.get()
-        marker_list_str = self.marker_list_var.get()
+        # Create buttons and status label first, so they appear at top
+        button_frame = tk.Frame(self)
+        button_frame.pack(side="top", pady=10)  # <--- move above notebook
+        tk.Button(button_frame, text="Restore Last Settings",
+                  command=self.load_settings, font=("Arial", 10)).pack(side='left', padx=5)
+        tk.Button(button_frame, text="Run Plotting", command=self.on_run_click,
+                  font=("Arial", 12, "bold"), bg="lightblue", relief="raised", padx=10, pady=5).pack(side='left',
+                                                                                                     padx=5)
 
-        if not all([data_path, dictionary_path, different_batches, number_of_cells]):
-            messagebox.showwarning("Fehlende Eingabe", "Bitte alle Felder ausfüllen.")
+        self.status_label = tk.Label(self, text="", bd=1, relief="sunken", anchor="w")
+        self.status_label.pack(side="bottom", fill="x")
+
+        # Create a notebook (tabbed interface)
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(expand=True, fill='both', padx=10, pady=10)
+
+        # Tab 1: Main Inputs
+        self.main_frame = tk.Frame(self.notebook, padx=10, pady=10)
+        self.notebook.add(self.main_frame, text="Main Settings")
+        self.create_main_inputs(self.main_frame)
+        # Tab 2: Plot Customization
+        self.plot_frame = tk.Frame(self.notebook, padx=10, pady=10)
+        self.notebook.add(self.plot_frame, text="Plot Customization")
+        self.create_plot_customization(self.plot_frame)
+
+        # Tab 3: Dictionary Editor
+        self.dict_frame = tk.Frame(self.notebook, padx=10, pady=10)
+        self.notebook.add(self.dict_frame, text="Edit Dictionary")
+        self.create_dict_editor(self.dict_frame)
+
+    def create_main_inputs(self, frame):
+        labels = ["Data Directory:", "Dictionary File:", "Number of Batches:",
+                  "Cells per Batch (comma-separated):"]
+        self.entries = {}
+        for i, text in enumerate(labels):
+            tk.Label(frame, text=text, anchor="w", font=("Arial", 10)).grid(row=i, column=0, sticky="w", pady=5)
+            entry = tk.Entry(frame, width=60)
+            entry.grid(row=i, column=1, padx=5, pady=5)
+            self.entries[text] = entry
+
+        self.entries["Data Directory:"].insert(0, self.default_data_path)
+        self.entries["Dictionary File:"].insert(0, self.default_dict_file)
+        self.entries["Number of Batches:"].insert(0, "4")
+        self.entries["Cells per Batch (comma-separated):"].insert(0,
+                                                                  "1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2")
+
+        # Browse buttons
+        tk.Button(frame, text="Browse", command=self.browse_data_path).grid(row=0, column=2, padx=5)
+        tk.Button(frame, text="Browse", command=self.browse_dictionary_file).grid(row=1, column=2, padx=5)
+
+        # Radiobuttons for plot options
+        tk.Label(frame, text="CE Graph:", anchor="w", font=("Arial", 10)).grid(row=4, column=0, sticky="w", pady=5)
+        self.ce_graph_var = tk.StringVar(value="Yes")
+        tk.Radiobutton(frame, text="Yes", variable=self.ce_graph_var, value="Yes").grid(row=4, column=1, sticky="w")
+        tk.Radiobutton(frame, text="No", variable=self.ce_graph_var, value="No").grid(row=4, column=1, padx=40,
+                                                                                      sticky="w")
+
+        tk.Label(frame, text="Capacity Plot Mode:", anchor="w", font=("Arial", 10)).grid(row=5, column=0, sticky="w",
+                                                                                         pady=5)
+        self.capacity_plot_mode_var = tk.StringVar(value="both")
+        tk.Radiobutton(frame, text="Discharge", variable=self.capacity_plot_mode_var, value="discharge").grid(row=5,
+                                                                                                              column=1,
+                                                                                                              sticky="w")
+        tk.Radiobutton(frame, text="Charge", variable=self.capacity_plot_mode_var, value="charge").grid(row=5, column=1,
+                                                                                                        padx=80,
+                                                                                                        sticky="w")
+        tk.Radiobutton(frame, text="Both", variable=self.capacity_plot_mode_var, value="both").grid(row=5, column=1,
+                                                                                                    padx=160,
+                                                                                                    sticky="w")
+
+        tk.Label(frame, text="First Cycle Discharge Only:", anchor="w", font=("Arial", 10)).grid(row=6, column=0,
+                                                                                                 sticky="w", pady=5)
+        self.first_cycle_discharge_var = tk.StringVar(value="Yes")
+        tk.Radiobutton(frame, text="Yes", variable=self.first_cycle_discharge_var, value="Yes").grid(row=6, column=1,
+                                                                                                     sticky="w")
+        tk.Radiobutton(frame, text="No", variable=self.first_cycle_discharge_var, value="No").grid(row=6, column=1,
+                                                                                                   padx=40, sticky="w")
+
+        tk.Label(frame, text="Plot Individual Cells:", anchor="w", font=("Arial", 10)).grid(row=7, column=0, sticky="w",
+                                                                                            pady=5)
+        self.plot_individual_cells_var = tk.StringVar(value="No")
+        tk.Radiobutton(frame, text="Yes", variable=self.plot_individual_cells_var, value="Yes").grid(row=7, column=1,
+                                                                                                     sticky="w")
+        tk.Radiobutton(frame, text="No", variable=self.plot_individual_cells_var, value="No").grid(row=7, column=1,
+                                                                                                   padx=40, sticky="w")
+
+    def create_plot_customization(self, frame):
+        # Store default matplotlib font family for later use
+        self.default_font_family = plt.rcParams['font.family']
+        
+        # Create a canvas with scrollbar
+        canvas = tk.Canvas(frame)
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(
+                scrollregion=canvas.bbox("all")
+            )
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Font Settings Section
+        tk.Label(scrollable_frame, text="Font Settings", font=("Arial", 12, "bold")).pack(fill='x', pady=(10, 5))
+        
+        # Create frame for font settings
+        font_frame = ttk.LabelFrame(scrollable_frame, text="Font Customization", padding=(5, 5, 5, 5))
+        font_frame.pack(fill='x', pady=5, padx=5)
+
+        # Legend Font Settings
+        legend_frame = ttk.LabelFrame(font_frame, text="Legend Font", padding=(5, 5, 5, 5))
+        legend_frame.pack(fill='x', pady=2)
+        
+        tk.Label(legend_frame, text="Font Size:").pack(side='left', padx=5)
+        self.legend_font_size = tk.Entry(legend_frame, width=5)
+        self.legend_font_size.pack(side='left', padx=5)
+        self.legend_font_size.insert(0, "12")  # Default size
+        
+        tk.Label(legend_frame, text="Font Family:").pack(side='left', padx=5)
+        self.legend_font_family = ttk.Combobox(legend_frame, width=15)
+        self.legend_font_family['values'] = ['default'] + sorted(font_manager.get_font_names())
+        self.legend_font_family.pack(side='left', padx=5)
+        self.legend_font_family.set('default')
+
+        # Axis Labels Font Settings
+        axis_labels_frame = ttk.LabelFrame(font_frame, text="Axis Labels Font", padding=(5, 5, 5, 5))
+        axis_labels_frame.pack(fill='x', pady=2)
+        
+        tk.Label(axis_labels_frame, text="Font Size:").pack(side='left', padx=5)
+        self.axis_label_font_size = tk.Entry(axis_labels_frame, width=5)
+        self.axis_label_font_size.pack(side='left', padx=5)
+        self.axis_label_font_size.insert(0, "13")  # Default size
+        
+        tk.Label(axis_labels_frame, text="Font Family:").pack(side='left', padx=5)
+        self.axis_label_font_family = ttk.Combobox(axis_labels_frame, width=15)
+        self.axis_label_font_family['values'] = ['default'] + sorted(font_manager.get_font_names())
+        self.axis_label_font_family.pack(side='left', padx=5)
+        self.axis_label_font_family.set('default')
+
+        # Tick Labels Font Settings
+        tick_labels_frame = ttk.LabelFrame(font_frame, text="Tick Labels Font", padding=(5, 5, 5, 5))
+        tick_labels_frame.pack(fill='x', pady=2)
+        
+        tk.Label(tick_labels_frame, text="Font Size:").pack(side='left', padx=5)
+        self.tick_label_font_size = tk.Entry(tick_labels_frame, width=5)
+        self.tick_label_font_size.pack(side='left', padx=5)
+        self.tick_label_font_size.insert(0, "12")  # Default size
+        
+        tk.Label(tick_labels_frame, text="Font Family:").pack(side='left', padx=5)
+        self.tick_label_font_family = ttk.Combobox(tick_labels_frame, width=15)
+        self.tick_label_font_family['values'] = ['default'] + sorted(font_manager.get_font_names())
+        self.tick_label_font_family.pack(side='left', padx=5)
+        self.tick_label_font_family.set('default')
+
+        # General Plot Settings
+        tk.Label(scrollable_frame, text="General Plot Settings", font=("Arial", 12, "bold")).pack(fill='x', pady=(10, 5))
+        
+        # Pack the canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        tk.Label(frame, text="Color List (comma-separated):", anchor="w").pack(fill='x', pady=(5, 0))
+        self.color_text = tk.Text(frame, height=4, width=80)
+        self.color_text.pack(pady=5)
+        self.color_text.insert(tk.END,
+                               "tab:blue, tab:orange, tab:green, tab:red, tab:purple, tab:brown, tab:pink, tab:gray, tab:olive, tab:cyan")
+
+        tk.Label(frame, text="Marker List (comma-separated):", anchor="w").pack(fill='x', pady=(5, 0))
+        self.marker_text = tk.Text(frame, height=4, width=80)
+        self.marker_text.pack(pady=5)
+        self.marker_text.insert(tk.END,
+                                "o, v, ^, <, >, s, p, 2, 3, 4, 8, s, p, P, *, h, H, +, x, X, D, d, |, _, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11")
+
+        # --- Capacity Plot Settings ---
+        tk.Label(frame, text="Capacity Plot Settings", font=("Arial", 12, "bold")).pack(fill='x', pady=(15, 5))
+
+        tk.Label(frame, text="Capacity Plot Title:", anchor="w").pack(fill='x', pady=(5, 0))
+        self.capacity_title_entry = tk.Entry(frame, width=80)
+        self.capacity_title_entry.pack(pady=5)
+        self.capacity_title_entry.insert(0, "Specific Capacity and Coulombic Efficiency")
+
+        tk.Label(frame, text="Capacity Y-axis Label:", anchor="w").pack(fill='x', pady=(5, 0))
+        self.capacity_ylabel_entry = tk.Entry(frame, width=80)
+        self.capacity_ylabel_entry.pack(pady=5)
+        self.capacity_ylabel_entry.insert(0, 'Specific Capacity [mAh $g^{-1}$]')
+
+        tk.Label(frame, text="Individual Cell Legend Suffix:", anchor="w").pack(fill='x', pady=(5, 0))
+        self.individual_cell_legend_suffix_entry = tk.Entry(frame, width=80)
+        self.individual_cell_legend_suffix_entry.pack(pady=5)
+        self.individual_cell_legend_suffix_entry.insert(0, "(Cell)")
+
+        tk.Label(frame, text="Capacity X-axis Limits (min, max):", anchor="w").pack(fill='x', pady=(5, 0))
+        cap_xlim_frame = tk.Frame(frame)
+        cap_xlim_frame.pack(fill='x')
+        self.capacity_xmin_entry = tk.Entry(cap_xlim_frame, width=10)
+        self.capacity_xmin_entry.pack(side='left', padx=5)
+        tk.Label(cap_xlim_frame, text=",").pack(side='left')
+        self.capacity_xmax_entry = tk.Entry(cap_xlim_frame, width=10)
+        self.capacity_xmax_entry.pack(side='left', padx=5)
+
+        tk.Label(frame, text="Capacity Y-axis Limits (min, max):", anchor="w").pack(fill='x', pady=(5, 0))
+        cap_ylim_frame = tk.Frame(frame)
+        cap_ylim_frame.pack(fill='x')
+        self.capacity_ymin_entry = tk.Entry(cap_ylim_frame, width=10)
+        self.capacity_ymin_entry.pack(side='left', padx=5)
+        tk.Label(cap_ylim_frame, text=",").pack(side='left')
+        self.capacity_ymax_entry = tk.Entry(cap_ylim_frame, width=10)
+        self.capacity_ymax_entry.pack(side='left', padx=5)
+        self.capacity_ymax_entry.insert(0, "210")
+
+        # --- CE Plot Settings ---
+        tk.Label(frame, text="CE Plot Settings (only used if 'CE Graph' is 'Yes')", font=("Arial", 12, "bold")).pack(
+            fill='x', pady=(15, 5))
+
+        tk.Label(frame, text="CE Plot Title:", anchor="w").pack(fill='x', pady=(5, 0))
+        self.ce_title_entry = tk.Entry(frame, width=80)
+        self.ce_title_entry.pack(pady=5)
+        self.ce_title_entry.insert(0, "Coulombic Efficiency")
+
+        tk.Label(frame, text="CE Y-axis Label:", anchor="w").pack(fill='x', pady=(5, 0))
+        self.ce_ylabel_entry = tk.Entry(frame, width=80)
+        self.ce_ylabel_entry.pack(pady=5)
+        self.ce_ylabel_entry.insert(0, 'CE [%]')
+
+        tk.Label(frame, text="CE X-axis Limits (min, max):", anchor="w").pack(fill='x', pady=(5, 0))
+        ce_xlim_frame = tk.Frame(frame)
+        ce_xlim_frame.pack(fill='x')
+        self.ce_xmin_entry = tk.Entry(ce_xlim_frame, width=10)
+        self.ce_xmin_entry.pack(side='left', padx=5)
+        tk.Label(ce_xlim_frame, text=",").pack(side='left')
+        self.ce_xmax_entry = tk.Entry(ce_xlim_frame, width=10)
+        self.ce_xmax_entry.pack(side='left', padx=5)
+
+        tk.Label(frame, text="CE Y-axis Limits (min, max):", anchor="w").pack(fill='x', pady=(5, 0))
+        ce_ylim_frame = tk.Frame(frame)
+        ce_ylim_frame.pack(fill='x')
+        self.ce_ymin_entry = tk.Entry(ce_ylim_frame, width=10)
+        self.ce_ymin_entry.pack(side='left', padx=5)
+        self.ce_ymin_entry.insert(0, "98")
+        tk.Label(ce_ylim_frame, text=",").pack(side='left')
+        self.ce_ymax_entry = tk.Entry(ce_ylim_frame, width=10)
+        self.ce_ymax_entry.pack(side='left', padx=5)
+        self.ce_ymax_entry.insert(0, "102")
+
+    def create_dict_editor(self, frame):
+        tk.Label(frame, text="Edit content of dictionary_HIPOLE.txt:", anchor="w").pack(fill='x', pady=(10, 0))
+        self.dict_text = tk.Text(frame, height=20, width=80)
+        self.dict_text.pack(pady=5, expand=True, fill='both')
+
+        dict_button_frame = tk.Frame(frame)
+        dict_button_frame.pack(pady=5)
+        tk.Button(dict_button_frame, text="Load Dictionary", command=self.load_dictionary).pack(side='left', padx=5)
+        tk.Button(dict_button_frame, text="Save Dictionary", command=self.save_dictionary).pack(side='left', padx=5)
+
+        self.load_dictionary()  # Load the dictionary on startup
+
+    def browse_data_path(self):
+        directory = filedialog.askdirectory(title="Select Data Directory")
+        if directory:
+            self.entries["Data Directory:"].delete(0, tk.END)
+            self.entries["Data Directory:"].insert(0, directory)
+
+    def browse_dictionary_file(self):
+        file_path = filedialog.askopenfilename(title="Select Dictionary File", filetypes=[("Text files", "*.txt")])
+        if file_path:
+            self.entries["Dictionary File:"].delete(0, tk.END)
+            self.entries["Dictionary File:"].insert(0, file_path)
+            self.load_dictionary()
+
+    def load_dictionary(self):
+        dict_path = self.entries["Dictionary File:"].get()
+        if not Path(dict_path).is_file():
+            self.dict_text.delete(1.0, tk.END)
+            self.status_label.config(text="Warning: Dictionary file not found.")
             return
 
-        # Die Prozess- und Plot-Funktion aufrufen
-        process_and_plot(self, data_path, dictionary_path, different_batches, number_of_cells, charge_graph,
-                         discharge_graph, ce_graph, color_list_str, marker_list_str)
+        try:
+            with open(dict_path, "r") as file:
+                content = file.read()
+                self.dict_text.delete(1.0, tk.END)
+                self.dict_text.insert(tk.END, content)
+                self.status_label.config(text="Dictionary loaded successfully.")
+        except Exception as e:
+            messagebox.showerror("Loading Error", f"Could not load dictionary: {e}")
+            self.status_label.config(text="Error loading dictionary.")
+
+    def save_dictionary(self):
+        dict_path = self.entries["Dictionary File:"].get()
+        content = self.dict_text.get(1.0, tk.END)
+        try:
+            # Validate content before saving
+            ast.literal_eval(content)
+            with open(dict_path, "w") as file:
+                file.write(content)
+            self.status_label.config(text="Dictionary saved successfully.")
+        except (SyntaxError, ValueError) as e:
+            messagebox.showerror("Save Error", f"Invalid dictionary format. Please check it. Error: {e}")
+            self.status_label.config(text="Error: Invalid dictionary format.")
+        except Exception as e:
+            messagebox.showerror("Save Error", f"Could not save dictionary: {e}")
+            self.status_label.config(text="Error saving dictionary.")
+
+    def save_settings(self):
+        settings = {
+            "data_path": self.entries["Data Directory:"].get(),
+            "dictionary_name": self.entries["Dictionary File:"].get(),
+            "different_batches": self.entries["Number of Batches:"].get(),
+            "number_of_cells": self.entries["Cells per Batch (comma-separated):"].get(),
+            "ce_graph": self.ce_graph_var.get(),
+            # Font settings
+            "legend_font_size": self.legend_font_size.get(),
+            "legend_font_family": self.legend_font_family.get(),
+            "axis_label_font_size": self.axis_label_font_size.get(),
+            "axis_label_font_family": self.axis_label_font_family.get(),
+            "tick_label_font_size": self.tick_label_font_size.get(),
+            "tick_label_font_family": self.tick_label_font_family.get(),
+            "capacity_plot_mode": self.capacity_plot_mode_var.get(),
+            "first_cycle_discharge_only": self.first_cycle_discharge_var.get(),
+            "plot_individual_cells": self.plot_individual_cells_var.get(),
+            "color_list": self.color_text.get(1.0, tk.END).strip(),
+            "marker_list": self.marker_text.get(1.0, tk.END).strip(),
+            "capacity_plot_title": self.capacity_title_entry.get(),
+            "capacity_ylabel_text": self.capacity_ylabel_entry.get(),
+            "individual_cell_legend_suffix": self.individual_cell_legend_suffix_entry.get(),
+            "ce_plot_title": self.ce_title_entry.get(),
+            "ce_ylabel_text": self.ce_ylabel_entry.get(),
+            "ce_ymin": self.ce_ymin_entry.get(),
+            "ce_ymax": self.ce_ymax_entry.get(),
+            "capacity_xmin": self.capacity_xmin_entry.get(),
+            "capacity_xmax": self.capacity_xmax_entry.get(),
+            "capacity_ymin": self.capacity_ymin_entry.get(),
+            "capacity_ymax": self.capacity_ymax_entry.get(),
+            "ce_xmin": self.ce_xmin_entry.get(),
+            "ce_xmax": self.ce_xmax_entry.get()
+        }
+        try:
+            with open(self.settings_file, 'wb') as f:
+                pickle.dump(settings, f)
+            self.status_label.config(text="Settings saved.")
+        except Exception as e:
+            self.status_label.config(text=f"Error saving settings: {e}")
+
+    def load_settings(self):
+        # Ensure matplotlib is using its default font family
+        plt.rcParams['font.family'] = plt.rcParamsDefault['font.family']
+        
+        if not Path(self.settings_file).is_file():
+            self.status_label.config(text="No saved settings found.")
+            return
+
+        try:
+            with open(self.settings_file, 'rb') as f:
+                settings = pickle.load(f)
+
+            # Load font settings
+            self.legend_font_size.delete(0, tk.END)
+            self.legend_font_size.insert(0, settings.get("legend_font_size", "12"))
+            self.legend_font_family.set(settings.get("legend_font_family", "default"))
+            
+            self.axis_label_font_size.delete(0, tk.END)
+            self.axis_label_font_size.insert(0, settings.get("axis_label_font_size", "13"))
+            self.axis_label_font_family.set(settings.get("axis_label_font_family", "default"))
+            
+            self.tick_label_font_size.delete(0, tk.END)
+            self.tick_label_font_size.insert(0, settings.get("tick_label_font_size", "12"))
+            self.tick_label_font_family.set(settings.get("tick_label_font_family", "default"))
+
+            self.entries["Data Directory:"].delete(0, tk.END)
+            self.entries["Data Directory:"].insert(0, settings.get("data_path", ""))
+            self.entries["Dictionary File:"].delete(0, tk.END)
+            self.entries["Dictionary File:"].insert(0, settings.get("dictionary_name", ""))
+            self.entries["Number of Batches:"].delete(0, tk.END)
+            self.entries["Number of Batches:"].insert(0, settings.get("different_batches", ""))
+            self.entries["Cells per Batch (comma-separated):"].delete(0, tk.END)
+            self.entries["Cells per Batch (comma-separated):"].insert(0, settings.get("number_of_cells", ""))
+
+            self.ce_graph_var.set(settings.get("ce_graph", "Yes"))
+            self.capacity_plot_mode_var.set(settings.get("capacity_plot_mode", "both"))
+            self.first_cycle_discharge_var.set(settings.get("first_cycle_discharge_only", "Yes"))
+            self.plot_individual_cells_var.set(settings.get("plot_individual_cells", "No"))
+
+            self.color_text.delete(1.0, tk.END)
+            self.color_text.insert(tk.END, settings.get("color_list", ""))
+            self.marker_text.delete(1.0, tk.END)
+            self.marker_text.insert(tk.END, settings.get("marker_list", ""))
+
+            self.capacity_title_entry.delete(0, tk.END)
+            self.capacity_title_entry.insert(0, settings.get("capacity_plot_title", ""))
+            self.capacity_ylabel_entry.delete(0, tk.END)
+            self.capacity_ylabel_entry.insert(0, settings.get("capacity_ylabel_text", ""))
+            self.individual_cell_legend_suffix_entry.delete(0, tk.END)
+            self.individual_cell_legend_suffix_entry.insert(0, settings.get("individual_cell_legend_suffix", "(Cell)"))
+
+            self.capacity_xmin_entry.delete(0, tk.END)
+            self.capacity_xmin_entry.insert(0, settings.get("capacity_xmin", ""))
+            self.capacity_xmax_entry.delete(0, tk.END)
+            self.capacity_xmax_entry.insert(0, settings.get("capacity_xmax", ""))
+            self.capacity_ymin_entry.delete(0, tk.END)
+            self.capacity_ymin_entry.insert(0, settings.get("capacity_ymin", ""))
+            self.capacity_ymax_entry.delete(0, tk.END)
+            self.capacity_ymax_entry.insert(0, settings.get("capacity_ymax", ""))
+
+            self.ce_title_entry.delete(0, tk.END)
+            self.ce_title_entry.insert(0, settings.get("ce_plot_title", ""))
+            self.ce_ylabel_entry.delete(0, tk.END)
+            self.ce_ylabel_entry.insert(0, settings.get("ce_ylabel_text", ""))
+            self.ce_xmin_entry.delete(0, tk.END)
+            self.ce_xmin_entry.insert(0, settings.get("ce_xmin", ""))
+            self.ce_xmax_entry.delete(0, tk.END)
+            self.ce_xmax_entry.insert(0, settings.get("ce_xmax", ""))
+            self.ce_ymin_entry.delete(0, tk.END)
+            self.ce_ymin_entry.insert(0, settings.get("ce_ymin", ""))
+            self.ce_ymax_entry.delete(0, tk.END)
+            self.ce_ymax_entry.insert(0, settings.get("ce_ymax", ""))
+
+            self.status_label.config(text="Settings loaded successfully.")
+        except Exception as e:
+            self.status_label.config(text=f"Error loading settings: {e}")
+
+    def on_run_click(self):
+        # Store default matplotlib settings
+        original_font_family = plt.rcParams['font.family']
+        
+        # Save settings before running the plot
+        self.save_settings()
+
+        # Get all values from the GUI
+        data_path_str = self.entries["Data Directory:"].get()
+        dictionary_name_str = self.entries["Dictionary File:"].get()
+        different_batches_str = self.entries["Number of Batches:"].get()
+        number_of_cells_str = self.entries["Cells per Batch (comma-separated):"].get()
+        ce_graph_str = self.ce_graph_var.get()
+        capacity_plot_mode_str = self.capacity_plot_mode_var.get()
+        first_cycle_discharge_only_str = self.first_cycle_discharge_var.get()
+        plot_individual_cells_str = self.plot_individual_cells_var.get()
+        color_list_str = self.color_text.get(1.0, tk.END).strip()
+        marker_list_str = self.marker_text.get(1.0, tk.END).strip()
+        capacity_plot_title_str = self.capacity_title_entry.get()
+        capacity_ylabel_text_str = self.capacity_ylabel_entry.get()
+        individual_cell_legend_suffix_str = self.individual_cell_legend_suffix_entry.get()
+        ce_plot_title_str = self.ce_title_entry.get()
+        ce_ylabel_text_str = self.ce_ylabel_entry.get()
+        capacity_xmin_str = self.capacity_xmin_entry.get()
+        capacity_xmax_str = self.capacity_xmax_entry.get()
+        capacity_ymin_str = self.capacity_ymin_entry.get()
+        capacity_ymax_str = self.capacity_ymax_entry.get()
+        ce_xmin_str = self.ce_xmin_entry.get()
+        ce_xmax_str = self.ce_xmax_entry.get()
+        ce_ymin_str = self.ce_ymin_entry.get()
+        ce_ymax_str = self.ce_ymax_entry.get()
+
+        # Get font settings
+        legend_font_size = self.legend_font_size.get()
+        legend_font_family = self.legend_font_family.get()
+        axis_label_font_size = self.axis_label_font_size.get()
+        axis_label_font_family = self.axis_label_font_family.get()
+        tick_label_font_size = self.tick_label_font_size.get()
+        tick_label_font_family = self.tick_label_font_family.get()
+
+        run_plotting(data_path_str, dictionary_name_str, different_batches_str, number_of_cells_str,
+                     ce_graph_str, capacity_plot_mode_str, first_cycle_discharge_only_str, plot_individual_cells_str,
+                     color_list_str, marker_list_str, capacity_plot_title_str, capacity_ylabel_text_str,
+                     capacity_xmin_str, capacity_xmax_str, capacity_ymin_str, capacity_ymax_str,
+                     ce_plot_title_str, ce_ylabel_text_str, ce_xmin_str, ce_xmax_str, ce_ymin_str, ce_ymax_str,
+                     individual_cell_legend_suffix_str,
+                     legend_font_size=legend_font_size,
+                     legend_font_family=legend_font_family,
+                     axis_label_font_size=axis_label_font_size,
+                     axis_label_font_family=axis_label_font_family,
+                     tick_label_font_size=tick_label_font_size,
+                     tick_label_font_family=tick_label_font_family,
+                     close_app_on_plot_close=False)
 
 
-if __name__ == "__main__":
-    root = Tk()
-    app = EchemPlotterApp(root)
-    root.mainloop()
+if __name__ == '__main__':
+    app = PlottingGUI()
+    app.mainloop()
