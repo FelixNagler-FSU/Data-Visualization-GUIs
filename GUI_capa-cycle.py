@@ -97,7 +97,8 @@ def run_plotting(data_path_str, dictionary_name_str, different_batches_str, numb
         messagebox.showerror("Error", f"Invalid format in dictionary file. Error: {e}")
         return
 
-    if len(number_of_cells) != len(data_file_names):
+    #if len(number_of_cells) != len(data_file_names):
+    if sum(number_of_cells) != len(data_file_names):
         messagebox.showwarning("Warning",
                                "Number of cells per batch does not match the number of files. Processing will continue, but this might lead to errors.")
 
