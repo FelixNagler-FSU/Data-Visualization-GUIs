@@ -1,4 +1,4 @@
-{'FN_E1': ['FN_250713_KetB_S_1to4 (PTFE, freistehend)', '', '', ''],
+{'FN_E01': ['FN_250713_KetB_S_1to4 (PTFE, freistehend)', '', '', ''],
                    'FN_E2': ['FN_250713_KetB_S_1to4 (PTFE, C-Al, Swagelok)', '', '', ''],
                    'FN_E4a_Swagelok': ['CMC, C-Al, Swagelok', '', '', ''],
                    'FN_E4a_CC': ['CMC, 10 min ball mill, C-Al, CoinCell', '', '', ''],
@@ -21,6 +21,10 @@
 		   '02_FN_E8b_2mm-hole-Li_CC': ['CMC, Planetary Mixer, Al, 2mm Li-hole, 7 mAh/cm²', '', '', ''],
 		   'FN_E8b_1mm-hole-StS_CC': ['CMC, Planetary Mixer, Al, 1mm Spacer-hole, 7.5 mAh/cm²', '', '', ''],
 		   'FN_E9_CC': ['CMC, Planetary Mixer, C-Al, CoinCell', '', '', ''],
+		'10ul-mg_FN_E09_CC': ['CMC, Planetary Mixer, C-Al, CoinCell, 10 µl/mg', '', '', ''],
+		'5ul-mg_FN_E09_CC': ['CMC, Planetary Mixer, C-Al, CoinCell, 5 µl/mg', '', '', ''],
+		'3ul-mg_FN_E09_CC': ['CMC, Planetary Mixer, C-Al, CoinCell, 3 µl/mg', '', '', ''],
+		'FN_E10_CC': ['XPB538, CMC, Ball Mill, C-Al, CoinCell', '', '', ''],
 
 
 
@@ -29,6 +33,8 @@
                    'dummy_end': ['', '', '', '']
 
                    }
+
+
 
 
 

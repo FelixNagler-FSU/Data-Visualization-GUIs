@@ -1,0 +1,13 @@
+# Core scientific stack
+numpy
+pandas
+scipy
+matplotlib
+xarray
+
+# Data extraction for .mpr files
+yadg
+
+# Windows automation (used in Automatisierung_DatenExport_3.0.py)
+pywinauto
+pyautogui
