@@ -93,5 +93,3 @@ if __name__ == "__main__":
 
     copied_count = find_and_copy_modified_files(SRC_DIR, DEST_DIR, ".mpr")
     print(f"\n{copied_count} neue Dateien wurden vorbereitet.\n")
-
-   

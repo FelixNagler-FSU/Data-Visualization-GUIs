@@ -1,3 +1,6 @@
+### authors: Felix Nagler
+### v0.1, Nov 2025
+
 import pandas as pd
 import numpy as np
 import scipy as sp
@@ -22,29 +25,64 @@ import matplotlib.colors as mcolors
 
 
 # --- Refactored plotting logic into a function ---
-def run_plotting(data_path_str, dictionary_name_str, cycle_numbers_str, plot_title_str, xlabel_text_str,
-                 ylabel_text_str,
-                 color_list_str, alpha_list_str, xmin_str, xmax_str, ymin_str, ymax_str, first_cycle_discharge_only,
-                 close_app_on_plot_close=False):
-    """
-    This function contains the core plotting logic, refactored to accept user inputs from the GUI.
-    It processes battery cycling data, calculates specific capacities, and generates a
-    voltage vs. specific capacity plot.
+def run_plotting(
+    data_path_str,
+    dictionary_name_str,
+    cycle_numbers_str,
+    plot_title_str,
+    xlabel_text_str,
+    ylabel_text_str,
+    color_list_str,
+    alpha_list_str,
+    xmin_str,
+    xmax_str,
+    ymin_str,
+    ymax_str,
+    first_cycle_discharge_only,
+    close_app_on_plot_close=False,
+    # Save options
+    save_png=True,
+    save_pdf=True,
+    save_svg=True,
+    save_txt=True,
+    save_netcdf=True,
+    save_zip=True,
+):
+    """Core logic for voltage vs specific capacity plotting.
+
+    High-level flow:
+    1. Parse & validate inputs (paths, numeric limits, cycle list).
+    2. Read .mpr files (skip non-.mpr). Extract voltage (Ewe/Ecell) and capacity (Q/Capacity).
+    3. Split data by half-cycles; map half-cycles to full cycles (conditional first-cycle discharge-only logic).
+    4. Build per-cycle charge/discharge capacity & voltage series (last sample per half-cycle retained).
+    5. Assemble DataFrames per cycle for plotting.
+    6. Generate matplotlib figure: overlay charge/discharge curves across selected cycles.
+    7. Save figure (PNG/SVG/PDF), pickle, TXT export of flattened data.
+    8. Export per-cell raw arrays to NetCDF (unique dimensions for differing lengths) and ZIP them.
+
+    Key conditions and their outcomes:
+    - Missing directory / dictionary file -> abort with messagebox error.
+    - Non-convertible numeric inputs -> abort with messagebox error.
+    - Non-.mpr files -> skipped (printed).
+    - Columns normalization: rename 'Ecell'->'Ewe', 'Capacity'->'Q' if needed.
+    - First cycle discharge-only flag True -> treat half-cycle 0 as cycle 1 discharge, adjust mapping.
+    - Axis limits applied only if both min & max given (None keeps autoscale).
+    - Variable length arrays across cycles -> separate point dimension per exported NetCDF variable.
 
     Args:
-        data_path_str (str): Path to the directory containing battery cycling data files.
-        dictionary_name_str (str): Path to the dictionary text file for legend mapping.
-        cycle_numbers_str (str): Comma-separated string of cycle numbers to plot.
-        plot_title_str (str): Title for the generated plot.
-        xlabel_text_str (str): Label for the x-axis.
-        ylabel_text_str (str): Label for the y-axis.
-        color_list_str (str): Comma-separated string of colors for the plot lines.
-        alpha_list_str (str): Comma-separated string of alpha (transparency) values.
-        xmin_str (str): String for the minimum x-axis limit.
-        xmax_str (str): String for the maximum x-axis limit.
-        ymin_str (str): String for the minimum y-axis limit.
-        ymax_str (str): String for the maximum y-axis limit.
-        first_cycle_discharge_only (bool): Flag to handle special first cycle logic.
+        data_path_str (str): Directory containing raw .mpr files.
+        dictionary_name_str (str): Path to legend mapping text file.
+        cycle_numbers_str (str): Comma-separated cycles to plot (e.g. "1, 5, 10").
+        plot_title_str (str): Figure title.
+        xlabel_text_str (str): X-axis label (usually capacity).
+        ylabel_text_str (str): Y-axis label (usually voltage).
+        color_list_str (str): Comma-separated matplotlib color spec list.
+        alpha_list_str (str): Comma-separated floats for transparency cycling per cycle.
+        xmin_str/xmax_str/ymin_str/ymax_str (str): Optional axis bounds.
+        first_cycle_discharge_only (bool): Special mapping rule for first cycle.
+        close_app_on_plot_close (bool): If True attempt to close Tk root after plotting.
+    Returns:
+        None. Side effects: files written, plot shown (non-blocking), NetCDF + ZIP saved.
     """
     # Convert string inputs to the required data types for processing
     try:
@@ -373,12 +411,17 @@ def run_plotting(data_path_str, dictionary_name_str, cycle_numbers_str, plot_tit
 
     # Save Figures and data BEFORE showing the plot (in case user closes/kills process)
     try:
-        plot_filename_base = 'volt-vs-cap_['+ str(cycle_numbers_str) + ']' + str(data_path.parts[-2])
+        # Include both the experiment folder (parent of "data") and the data folder name in the filename
+        # Example base: volt-vs-cap_[25]Experiment-data
+        plot_filename_base = f"volt-vs-cap_[{cycle_numbers_str}]{data_path.parts[-2]}-{data_path.parts[-1]}"
         plot_path = os.path.join(save_dir, plot_filename_base)
 
-        plt.savefig(f'{plot_path}.png')
-        plt.savefig(f'{plot_path}.svg')
-        plt.savefig(f'{plot_path}.pdf')
+        if save_png:
+            plt.savefig(f'{plot_path}.png')
+        if save_svg:
+            plt.savefig(f'{plot_path}.svg')
+        if save_pdf:
+            plt.savefig(f'{plot_path}.pdf')
         pickle.dump(fig, open(f'{plot_path}.pickle', 'wb'))
         print(f"Figures have been saved to {save_dir}.")
 
@@ -412,26 +455,40 @@ def run_plotting(data_path_str, dictionary_name_str, cycle_numbers_str, plot_tit
                 all_cycles_data = pd.concat([all_cycles_data, cycle_data], axis=1)
 
         # Save the master DataFrame to a tab-separated text file
-        data_save_path = os.path.join(save_dir, f'{plot_filename_base}.txt')
-        all_cycles_data.to_csv(data_save_path, sep='\t', index=False, float_format='%.4f')
-        print(f"Plotted data saved to {data_save_path}")
+        if save_txt:
+            data_save_path = os.path.join(save_dir, f'{plot_filename_base}.txt')
+            all_cycles_data.to_csv(data_save_path, sep='\t', index=False, float_format='%.4f')
+            print(f"Plotted data saved to {data_save_path}")
 
-        # Create a temporary directory for NetCDF files
-        temp_nc_dir = os.path.join(save_dir, f"{plot_filename_base}_nc_temp")
-        os.makedirs(temp_nc_dir, exist_ok=True)
+        # Decide NetCDF output strategy
+        temp_nc_dir = None
+        permanent_nc_dir = None
+        if save_netcdf or save_zip:
+            if save_zip and not save_netcdf:
+                temp_nc_dir = os.path.join(save_dir, f"{plot_filename_base}_nc_temp")
+                os.makedirs(temp_nc_dir, exist_ok=True)
+            elif save_netcdf and not save_zip:
+                permanent_nc_dir = os.path.join(save_dir, f"{plot_filename_base}_nc")
+                os.makedirs(permanent_nc_dir, exist_ok=True)
+            else:
+                temp_nc_dir = os.path.join(save_dir, f"{plot_filename_base}_nc_temp")
+                os.makedirs(temp_nc_dir, exist_ok=True)
 
-        # Group files by batch using the legend_list
+        # Group files by batch using the legend_list (only if exporting NetCDF)
         batch_files = {}
-        print("\nProcessing files for NetCDF export:")
-        print(f"Number of files to process: {len(filtered_data_file_names)}")
-        for idx, filename in enumerate(filtered_data_file_names):
-            batch_legend = legend_list[idx]
-            print(f"Processing file {filename} with legend {batch_legend}")
-            if batch_legend not in batch_files:
-                batch_files[batch_legend] = []
-            batch_files[batch_legend].append(filename)
+        if save_netcdf or save_zip:
+            print("\nProcessing files for NetCDF export:")
+            print(f"Number of files to process: {len(filtered_data_file_names)}")
+            for idx, filename in enumerate(filtered_data_file_names):
+                batch_legend = legend_list[idx]
+                print(f"Processing file {filename} with legend {batch_legend}")
+                if batch_legend not in batch_files:
+                    batch_files[batch_legend] = []
+                batch_files[batch_legend].append(filename)
 
         # Save each cell as a separate NetCDF file using the legend name
+        nc_output_dir = permanent_nc_dir if permanent_nc_dir else temp_nc_dir
+        saved_nc_files = []
         for batch_name, files in batch_files.items():
             for cell_idx, filename in enumerate(files, 1):
                 # Create dataset for this cell
@@ -453,11 +510,17 @@ def run_plotting(data_path_str, dictionary_name_str, cycle_numbers_str, plot_tit
 
                 if cell_data:  # Only create dataset if we have data
                     # Convert to xarray Dataset
-                    ds = xr.Dataset(
-                        {name: (['point'], data) for name, data in cell_data.items()},
-                        coords={'point': np.arange(len(next(iter(cell_data.values()))))}
-                    )
-                    # Add metadata
+                    # Different cycles/branches can have different lengths.
+                    # Condition: arrays have unequal sizes across cycles or between charge/discharge.
+                    # Outcome: give each variable its own dimension to avoid conflicting sizes in NetCDF.
+                    var_dict = {}
+                    coords_dict = {}
+                    for name, data in cell_data.items():
+                        dim_name = f'point_{name}'
+                        var_dict[name] = ([dim_name], data)
+                        coords_dict[dim_name] = np.arange(len(data))
+                    ds = xr.Dataset(var_dict, coords=coords_dict)
+                    # Add metadata for traceability and reproducibility
                     ds.attrs['cell_number'] = cell_idx
                     ds.attrs['batch_name'] = batch_name
                     ds.attrs['filename'] = filename
@@ -467,35 +530,28 @@ def run_plotting(data_path_str, dictionary_name_str, cycle_numbers_str, plot_tit
                     # Create safe filename from batch name and cell number
                     safe_batch_name = "".join(c for c in batch_name if c.isalnum() or c in (' ', '-', '_')).strip()
                     nc_filename = f'{safe_batch_name}-Cell{cell_idx}.nc'
-                    nc_path = os.path.join(temp_nc_dir, nc_filename)
+                    nc_path = os.path.join(nc_output_dir, nc_filename)
                     
                     print(f"\nSaving NetCDF file for {batch_name} Cell {cell_idx}:")
                     print(f"Path: {nc_path}")
                     try:
                         ds.to_netcdf(nc_path)
                         print("Successfully saved NetCDF file")
+                        saved_nc_files.append(nc_path)
                     except Exception as e:
                         print(f"Error saving NetCDF file: {e}")
-
-        # Create ZIP archive
-        zip_path = os.path.join(save_dir, f'{plot_filename_base}_raw_data.zip')
-        print(f"\nCreating ZIP archive at {zip_path}")
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            nc_files = []
-            for root, _, files in os.walk(temp_nc_dir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    arcname = os.path.relpath(file_path, temp_nc_dir)
+        # Create ZIP archive if requested
+        if (save_netcdf or save_zip) and save_zip and saved_nc_files:
+            zip_path = os.path.join(save_dir, f'{plot_filename_base}_raw_data.zip')
+            print(f"\nCreating ZIP archive at {zip_path}")
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for file_path in saved_nc_files:
+                    arcname = os.path.basename(file_path)
                     print(f"Adding file to ZIP: {arcname}")
                     zipf.write(file_path, arcname)
-                    nc_files.append(arcname)
-            
-            if not nc_files:
-                print("Warning: No NetCDF files were found to add to the ZIP archive")
-
-        # Clean up temporary directory
-        shutil.rmtree(temp_nc_dir)
-        print(f"Raw data saved as NetCDF files in {zip_path}")
+            print(f"Raw data saved as NetCDF files in {zip_path}")
+            if temp_nc_dir and os.path.isdir(temp_nc_dir):
+                shutil.rmtree(temp_nc_dir)
 
     except Exception as e:
         messagebox.showerror("Error while Saving Data", f"An error occurred while saving the data: {e}")
@@ -503,42 +559,8 @@ def run_plotting(data_path_str, dictionary_name_str, cycle_numbers_str, plot_tit
 
     # Show the plot now that everything is saved
     messagebox.showinfo("Success", "Plotting completed successfully. The graph will now be displayed.")
-    plt.show()
-
-    # Close figure windows and optionally quit/destroy the Tk root
-    try:
-        plt.close('all')
-    except Exception:
-        pass
-
-    if close_app_on_plot_close:
-        try:
-            app_obj = globals().get('app', None)
-            if app_obj is not None:
-                try:
-                    app_obj.quit()
-                except Exception:
-                    pass
-                try:
-                    app_obj.destroy()
-                except Exception:
-                    pass
-            else:
-                try:
-                    root = tk._default_root
-                    if root is not None:
-                        try:
-                            root.quit()
-                        except Exception:
-                            pass
-                        try:
-                            root.destroy()
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-        except Exception:
-            pass
+    plt.show(block=False)
+    # Don't close the figures immediately - let the user close them manually
     return
 
 
@@ -732,6 +754,34 @@ class VoltVsCapGUI(tk.Tk):
         self.legend_fontsize_entry.pack(pady=5)
         self.legend_fontsize_entry.insert(0, "10")
 
+        # --- Save Options ---
+        tk.Label(frame, text="Save Options", font=("Arial", 12, "bold")).pack(fill='x', pady=(15, 5))
+        save_frame = ttk.LabelFrame(frame, text="Select which files to save", padding=(5, 5, 5, 5))
+        save_frame.pack(fill='x', pady=5, padx=5)
+
+        img_frame = tk.Frame(save_frame)
+        img_frame.pack(fill='x', pady=(2, 2))
+        tk.Label(img_frame, text="Images:").pack(side='left', padx=(0, 8))
+        self.save_png_var = tk.BooleanVar(value=True)
+        self.save_pdf_var = tk.BooleanVar(value=True)
+        self.save_svg_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(img_frame, text="PNG", variable=self.save_png_var).pack(side='left', padx=4)
+        tk.Checkbutton(img_frame, text="PDF", variable=self.save_pdf_var).pack(side='left', padx=4)
+        tk.Checkbutton(img_frame, text="SVG", variable=self.save_svg_var).pack(side='left', padx=4)
+
+        data_frame = tk.Frame(save_frame)
+        data_frame.pack(fill='x', pady=(2, 2))
+        tk.Label(data_frame, text="Data:").pack(side='left', padx=(0, 8))
+        self.save_txt_var = tk.BooleanVar(value=True)
+        self.save_netcdf_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(data_frame, text="TXT (flattened plot)", variable=self.save_txt_var).pack(side='left', padx=4)
+        tk.Checkbutton(data_frame, text="NetCDF (per cell)", variable=self.save_netcdf_var).pack(side='left', padx=4)
+
+        zip_frame = tk.Frame(save_frame)
+        zip_frame.pack(fill='x', pady=(2, 2))
+        self.save_zip_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(zip_frame, text="RAW ZIP (NetCDF archive)", variable=self.save_zip_var).pack(side='left', padx=4)
+
     def create_dict_editor(self, frame):
         """Creates widgets for loading, editing, and saving the legend dictionary file."""
         tk.Label(frame, text="Edit content of dictionary_HIPOLE.txt:", anchor="w").pack(fill='x', pady=(10, 0))
@@ -818,7 +868,14 @@ class VoltVsCapGUI(tk.Tk):
             "axis_label_fontsize": self.axis_label_fontsize_entry.get(),
             "tick_label_fontsize": self.tick_label_fontsize_entry.get(),
             "legend_fontsize": self.legend_fontsize_entry.get(),
-            "font_family": self.font_family_var.get()
+            "font_family": self.font_family_var.get(),
+            # Save options
+            "save_png": bool(self.save_png_var.get()),
+            "save_pdf": bool(self.save_pdf_var.get()),
+            "save_svg": bool(self.save_svg_var.get()),
+            "save_txt": bool(self.save_txt_var.get()),
+            "save_netcdf": bool(self.save_netcdf_var.get()),
+            "save_zip": bool(self.save_zip_var.get()),
         }
         try:
             with open(self.settings_file, 'wb') as f:
@@ -876,6 +933,14 @@ class VoltVsCapGUI(tk.Tk):
             self.tick_label_fontsize_entry.insert(0, settings.get("tick_label_fontsize", "12"))
             self.legend_fontsize_entry.delete(0, tk.END)
             self.legend_fontsize_entry.insert(0, settings.get("legend_fontsize", "10"))
+
+            # Load save options (defaults True)
+            self.save_png_var.set(settings.get("save_png", True))
+            self.save_pdf_var.set(settings.get("save_pdf", True))
+            self.save_svg_var.set(settings.get("save_svg", True))
+            self.save_txt_var.set(settings.get("save_txt", True))
+            self.save_netcdf_var.set(settings.get("save_netcdf", True))
+            self.save_zip_var.set(settings.get("save_zip", True))
             
             self.status_label.config(text="Settings loaded successfully.")
         except Exception as e:
@@ -928,10 +993,28 @@ class VoltVsCapGUI(tk.Tk):
         })
 
         # Call the core plotting function with all the collected parameters
-        run_plotting(data_path_str, dictionary_name_str, cycle_numbers_str, plot_title_str,
-                     xlabel_text_str, ylabel_text_str, color_list_str, alpha_list_str,
-                     xmin_str, xmax_str, ymin_str, ymax_str, first_cycle_discharge_only,
-                     close_app_on_plot_close=False)  # Keep GUI open by default when plot closes
+        run_plotting(
+            data_path_str,
+            dictionary_name_str,
+            cycle_numbers_str,
+            plot_title_str,
+            xlabel_text_str,
+            ylabel_text_str,
+            color_list_str,
+            alpha_list_str,
+            xmin_str,
+            xmax_str,
+            ymin_str,
+            ymax_str,
+            first_cycle_discharge_only,
+            close_app_on_plot_close=False,
+            save_png=bool(self.save_png_var.get()),
+            save_pdf=bool(self.save_pdf_var.get()),
+            save_svg=bool(self.save_svg_var.get()),
+            save_txt=bool(self.save_txt_var.get()),
+            save_netcdf=bool(self.save_netcdf_var.get()),
+            save_zip=bool(self.save_zip_var.get()),
+        )  # Keep GUI open by default when plot closes
 
 
 if __name__ == '__main__':
