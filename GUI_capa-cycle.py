@@ -1,3 +1,6 @@
+### authors: Felix Nagler
+### v0.1, Nov 2025
+
 import pandas as pd
 import numpy as np
 import scipy as sp
@@ -21,17 +24,46 @@ from matplotlib.lines import Line2D
 import matplotlib.colors as mcolors
 
 # --- Refactored plotting logic into a function ---
-def run_plotting(data_path_str, dictionary_name_str, different_batches_str, number_of_cells_str, ce_graph_str,
-                 capacity_plot_mode_str, first_cycle_discharge_only_str, plot_individual_cells_str, color_list_str,
-                 marker_list_str,
-                 capacity_plot_title_str, capacity_ylabel_text_str, capacity_xmin_str, capacity_xmax_str,
-                 capacity_ymin_str, capacity_ymax_str,
-                 ce_plot_title_str, ce_ylabel_text_str, ce_xmin_str, ce_xmax_str, ce_ymin_str, ce_ymax_str,
-                 individual_cell_legend_suffix_str, 
-                 legend_font_size="12", legend_font_family="default",
-                 axis_label_font_size="13", axis_label_font_family="default",
-                 tick_label_font_size="12", tick_label_font_family="default",
-                 close_app_on_plot_close=False):
+def run_plotting(
+    data_path_str,
+    dictionary_name_str,
+    different_batches_str,
+    number_of_cells_str,
+    ce_graph_str,
+    capacity_plot_mode_str,
+    first_cycle_discharge_only_str,
+    plot_individual_cells_str,
+    color_list_str,
+    marker_list_str,
+    capacity_plot_title_str,
+    capacity_ylabel_text_str,
+    capacity_xmin_str,
+    capacity_xmax_str,
+    capacity_ymin_str,
+    capacity_ymax_str,
+    ce_plot_title_str,
+    ce_ylabel_text_str,
+    ce_xmin_str,
+    ce_xmax_str,
+    ce_ymin_str,
+    ce_ymax_str,
+    individual_cell_legend_suffix_str,
+    # Save options
+    save_png=True,
+    save_pdf=True,
+    save_svg=True,
+    save_txt=True,
+    save_netcdf=True,
+    save_zip=True,
+    # Fonts
+    legend_font_size="12",
+    legend_font_family="default",
+    axis_label_font_size="13",
+    axis_label_font_family="default",
+    tick_label_font_size="12",
+    tick_label_font_family="default",
+    close_app_on_plot_close=False,
+):
     """
     This function contains the core plotting logic, refactored to accept user inputs.
     It processes the data and generates the plots based on the provided parameters.
@@ -339,59 +371,94 @@ def run_plotting(data_path_str, dictionary_name_str, different_batches_str, numb
     specific_charge_capacity['Cycle'] = np.arange(1, specific_charge_capacity.shape[0] + 1)
     coulombic_efficiency['Cycle'] = np.arange(1, coulombic_efficiency.shape[0] + 1)
 
-    # Export data to NetCDF format for each batch
+    # Export data to NetCDF format for each batch (optional)
     # NetCDF is a self-describing, machine-independent data format for array-oriented scientific data
-    plot_name = 'cap-vs-cycle_' + str(data_path.parts[-2])
+    # Include both the experiment folder (parent of "data") and the data folder name in the filename
+    # Example: cap-vs-cycle_<ExperimentFolder>-<data>
+    plot_name = f"cap-vs-cycle_{data_path.parts[-2]}-{data_path.parts[-1]}"
     parent_dir = Path(data_path).parent
     
-    for counter_var in range(0, different_batches):
+    netcdf_paths = []
+    # If we only want a ZIP (and not individual NetCDF files), create a temp directory
+    temp_nc_dir = None
+    if save_zip and not save_netcdf:
+        temp_nc_dir = os.path.join(str(parent_dir), f"{plot_name}_nc_temp")
+        os.makedirs(temp_nc_dir, exist_ok=True)
+
+    if save_netcdf or save_zip:
+        for counter_var in range(0, different_batches):
+            try:
+                # Extract batch information from the legend and file names
+                batch_name = legend_list[counter_var].strip()
+                batch_name_part = data_file_names[cell_numeration[counter_var]]
+
+                # Create an xarray Dataset structure
+                # This organizes the data into a self-describing dataset with:
+                # - Variables: The actual data arrays (discharge/charge capacities and CE)
+                # - Coordinates: The cycle numbers that index these arrays
+                # - Attributes: Metadata about units and data provenance
+                # All variables share the 'cycle' coordinate and have identical length by construction
+                ds = xr.Dataset(
+                    {
+                        # Main capacity measurements with their standard deviations
+                        'discharge_capacity': (['cycle'], specific_discharge_capacity[f'{batch_name_part} mean discharge capacity'].values),
+                        'discharge_capacity_std': (['cycle'], specific_discharge_capacity[f'{batch_name_part} stddev discharge capacity'].values),
+                        'charge_capacity': (['cycle'], specific_charge_capacity[f'{batch_name_part} mean charge capacity'].values),
+                        'charge_capacity_std': (['cycle'], specific_charge_capacity[f'{batch_name_part} stddev charge capacity'].values),
+                        # Coulombic efficiency data
+                        'coulombic_efficiency': (['cycle'], coulombic_efficiency[f'{batch_name_part} mean'].values),
+                        'coulombic_efficiency_std': (['cycle'], coulombic_efficiency[f'{batch_name_part} stddev'].values),
+                    },
+                    coords={
+                        # Cycle numbers as coordinate variable
+                        'cycle': ('cycle', np.arange(1, max_len + 1)),
+                    }
+                )
+
+                # Add metadata attributes to the dataset
+                # These help users understand the data's context and units
+                ds.discharge_capacity.attrs['units'] = 'mAh/g'  # Specific capacity units
+                ds.charge_capacity.attrs['units'] = 'mAh/g'     # Specific capacity units
+                ds.coulombic_efficiency.attrs['units'] = '%'    # CE as percentage
+
+                # Record batch information and source files
+                ds.attrs['batch_name'] = batch_name  # Name from the legend dictionary
+                ds.attrs['data_files'] = ', '.join(data_file_names[cell_numeration[counter_var]:cell_numeration[counter_var + 1]])  # Original data files
+
+                # Save the dataset as a NetCDF file
+                # The file name includes both the experiment name and batch identifier.
+                # Sanitize the batch name to avoid illegal filename characters on Windows (e.g., '/', '\\', ':').
+                safe_batch_name = "".join(c for c in batch_name if c.isalnum() or c in (' ', '-', '_')).strip()
+                # Decide destination directory based on user choice
+                out_dir = str(parent_dir) if save_netcdf else temp_nc_dir
+                netcdf_name = os.path.join(out_dir, f'{plot_name}_{safe_batch_name}.nc')
+                ds.to_netcdf(netcdf_name)
+                netcdf_paths.append(netcdf_name)
+                print(f"NetCDF file saved: {netcdf_name}")
+
+            except Exception as e:
+                # Log any errors but continue processing other batches
+                print(f"Warning: Failed to create NetCDF for batch {batch_name}: {e}")
+                continue
+
+    # Optionally ZIP the raw NetCDF files
+    if (save_netcdf or save_zip) and save_zip and netcdf_paths:
         try:
-            # Extract batch information from the legend and file names
-            batch_name = legend_list[counter_var].strip()
-            batch_name_part = data_file_names[cell_numeration[counter_var]]
-            
-            # Create an xarray Dataset structure
-            # This organizes the data into a self-describing dataset with:
-            # - Variables: The actual data arrays (discharge/charge capacities and CE)
-            # - Coordinates: The cycle numbers that index these arrays
-            # - Attributes: Metadata about units and data provenance
-            ds = xr.Dataset(
-                {
-                    # Main capacity measurements with their standard deviations
-                    'discharge_capacity': (['cycle'], specific_discharge_capacity[f'{batch_name_part} mean discharge capacity'].values),
-                    'discharge_capacity_std': (['cycle'], specific_discharge_capacity[f'{batch_name_part} stddev discharge capacity'].values),
-                    'charge_capacity': (['cycle'], specific_charge_capacity[f'{batch_name_part} mean charge capacity'].values),
-                    'charge_capacity_std': (['cycle'], specific_charge_capacity[f'{batch_name_part} stddev charge capacity'].values),
-                    # Coulombic efficiency data
-                    'coulombic_efficiency': (['cycle'], coulombic_efficiency[f'{batch_name_part} mean'].values),
-                    'coulombic_efficiency_std': (['cycle'], coulombic_efficiency[f'{batch_name_part} stddev'].values),
-                },
-                coords={
-                    # Cycle numbers as coordinate variable
-                    'cycle': ('cycle', np.arange(1, max_len + 1)),
-                }
-            )
-
-            # Add metadata attributes to the dataset
-            # These help users understand the data's context and units
-            ds.discharge_capacity.attrs['units'] = 'mAh/g'  # Specific capacity units
-            ds.charge_capacity.attrs['units'] = 'mAh/g'     # Specific capacity units
-            ds.coulombic_efficiency.attrs['units'] = '%'    # CE as percentage
-            
-            # Record batch information and source files
-            ds.attrs['batch_name'] = batch_name  # Name from the legend dictionary
-            ds.attrs['data_files'] = ', '.join(data_file_names[cell_numeration[counter_var]:cell_numeration[counter_var + 1]])  # Original data files
-
-            # Save the dataset as a NetCDF file
-            # The file name includes both the experiment name and batch identifier
-            netcdf_name = os.path.join(str(parent_dir), f'{plot_name}_{batch_name.strip()}.nc')
-            ds.to_netcdf(netcdf_name)
-            print(f"NetCDF file saved: {netcdf_name}")
-
+            zip_path = os.path.join(str(parent_dir), f'{plot_name}_raw_data.zip')
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for nc in netcdf_paths:
+                    arcname = os.path.basename(nc)
+                    zipf.write(nc, arcname)
+            print(f"Raw data saved as ZIP: {zip_path}")
         except Exception as e:
-            # Log any errors but continue processing other batches
-            print(f"Warning: Failed to create NetCDF for batch {batch_name}: {e}")
-            continue
+            print(f"Warning: Failed to create ZIP archive: {e}")
+        finally:
+            # If we only created temp files (no individual NetCDF desired), clean them up
+            if temp_nc_dir is not None:
+                try:
+                    shutil.rmtree(temp_nc_dir)
+                except Exception:
+                    pass
 
     max_cycle_dis = specific_discharge_capacity.shape[0]
     max_cycle_ce = coulombic_efficiency.shape[0]
@@ -416,6 +483,8 @@ def run_plotting(data_path_str, dictionary_name_str, different_batches_str, numb
         'family': tick_label_font_family if tick_label_font_family != "default" else None
     }
 
+    # If the user requests a CE subplot (top) plus capacity subplot (bottom),
+    # we build a 2-row layout; otherwise a single capacity plot is created.
     if ce_graph.lower() == 'yes':
         fig, axs = plt.subplots(nrows=2, ncols=1, gridspec_kw={'height_ratios': [1, 3]}, figsize=(7, 5))
         
@@ -426,7 +495,9 @@ def run_plotting(data_path_str, dictionary_name_str, different_batches_str, numb
                 for label in ax.get_xticklabels() + ax.get_yticklabels():
                     label.set_family(tick_label_font['family'])
 
-        # Individual cell plots for Capacity
+    # Individual cell plots for Capacity
+    # Condition: only if the toggle is set to 'yes'. Each cell is a thin line overlay
+    # Outcome: gives per-cell traces with low alpha, while bold markers show batch means
         if plot_individual_cells.lower() == 'yes':
             for counter_var in range(0, len(data_file_names)):
                 label_prefix = f'Cell {counter_var + 1}'
@@ -450,7 +521,9 @@ def run_plotting(data_path_str, dictionary_name_str, different_batches_str, numb
                                 alpha=0.3
                                 )
 
-        # Mean and stddev plots for Capacity
+    # Mean and stddev plots for Capacity
+    # Condition: depends on capacity_plot_mode ('discharge', 'charge', 'both')
+    # Outcome: plots error bars (mean ± std) for each batch with chosen marker and color
         for counter_var in range(0, different_batches):
             if capacity_plot_mode in ['discharge', 'both']:
                 label_dis = f'{legend_list[counter_var]} (Discharge)' if capacity_plot_mode == 'both' else f'{legend_list[counter_var]}'
@@ -485,7 +558,7 @@ def run_plotting(data_path_str, dictionary_name_str, different_batches_str, numb
                                 #, errorevery=10
                                 )
 
-        # Plots for CE
+    # Plots for CE (top axis) — same batching/colors as capacity
         for counter_var in range(0, different_batches):
             axs[0].errorbar(coulombic_efficiency['Cycle'],
                             coulombic_efficiency['{} mean'.format(data_file_names[cell_numeration[counter_var]])],
@@ -524,73 +597,48 @@ def run_plotting(data_path_str, dictionary_name_str, different_batches_str, numb
 
         # Save figures and data before displaying (os._exit after show would prevent saving)
         try:
-            plot_name = 'cap-vs-cycle_' + str(data_path.parts[-2])
+            # Build filename base that includes both the experiment folder and the data folder
+            # Example: cap-vs-cycle_<Experiment>-<data>
+            plot_filename_base = f"cap-vs-cycle_{data_path.parts[-2]}-{data_path.parts[-1]}"
             parent_dir = Path(data_path).parent
 
-            plt.savefig(os.path.join(str(parent_dir), plot_name))
-            plt.savefig(os.path.join(str(parent_dir), str(f'{plot_name}.svg')))
-            plt.savefig(os.path.join(str(parent_dir), str(f'{plot_name}.pdf')))
-            pickle.dump(fig, open((os.path.join(str(parent_dir), plot_name) + '.pickle'), 'wb'))
+            # Save figures (PNG/SVG/PDF) based on user selection and a pickled figure for later editing
+            plot_path = os.path.join(str(parent_dir), plot_filename_base)
+            if save_png:
+                plt.savefig(f"{plot_path}.png")
+            if save_svg:
+                plt.savefig(f"{plot_path}.svg")
+            if save_pdf:
+                plt.savefig(f"{plot_path}.pdf")
+            pickle.dump(fig, open(os.path.join(str(parent_dir), f'{plot_filename_base}.pickle'), 'wb'))
+            # Export the numeric results to CSV (TXT) if enabled
+            if save_txt:
+                save_file_name = os.path.join(str(parent_dir), f'{plot_filename_base}.txt')
 
-            save_file_name = os.path.join(str(parent_dir), str(f'{plot_name}.txt'))
+                df_to_save = pd.DataFrame({'Cycle': np.arange(1, max_len + 1)})
 
-            df_to_save = pd.DataFrame({'Cycle': np.arange(1, max_len + 1)})
+                for counter_var in range(0, different_batches):
+                    batch_name_part = data_file_names[cell_numeration[counter_var]]
+                    df_to_save[f'{batch_name_part} mean discharge capacity'] = specific_discharge_capacity[
+                        f'{batch_name_part} mean discharge capacity']
+                    df_to_save[f'{batch_name_part} stddev discharge capacity'] = specific_discharge_capacity[
+                        f'{batch_name_part} stddev discharge capacity']
+                    df_to_save[f'{batch_name_part} mean charge capacity'] = specific_charge_capacity[
+                        f'{batch_name_part} mean charge capacity']
+                    df_to_save[f'{batch_name_part} stddev charge capacity'] = specific_charge_capacity[
+                        f'{batch_name_part} stddev charge capacity']
+                    df_to_save[f'{batch_name_part} mean CE'] = coulombic_efficiency[f'{batch_name_part} mean']
+                    df_to_save[f'{batch_name_part} stddev CE'] = coulombic_efficiency[f'{batch_name_part} stddev']
 
-            for counter_var in range(0, different_batches):
-                batch_name_part = data_file_names[cell_numeration[counter_var]]
-                df_to_save[f'{batch_name_part} mean discharge capacity'] = specific_discharge_capacity[
-                    f'{batch_name_part} mean discharge capacity']
-                df_to_save[f'{batch_name_part} stddev discharge capacity'] = specific_discharge_capacity[
-                    f'{batch_name_part} stddev discharge capacity']
-                df_to_save[f'{batch_name_part} mean charge capacity'] = specific_charge_capacity[
-                    f'{batch_name_part} mean charge capacity']
-                df_to_save[f'{batch_name_part} stddev charge capacity'] = specific_charge_capacity[
-                    f'{batch_name_part} stddev charge capacity']
-                df_to_save[f'{batch_name_part} mean CE'] = coulombic_efficiency[f'{batch_name_part} mean']
-                df_to_save[f'{batch_name_part} stddev CE'] = coulombic_efficiency[f'{batch_name_part} stddev']
-
-            df_to_save.to_csv(save_file_name, sep=',', index=False, na_rep='')
-            print(f"Data has been saved to {save_file_name}.")
+                df_to_save.to_csv(save_file_name, sep=',', index=False, na_rep='')
+                print(f"Data has been saved to {save_file_name}.")
         except Exception as e:
             messagebox.showerror("Error while Saving", f"An error occurred while saving the results: {e}")
             return
 
         messagebox.showinfo("Success", "Plotting completed successfully. The graphs will now be displayed.")
-        plt.show()
-        # Close only figure windows and return to the GUI. If user explicitly requests
-        # the app to close, perform a graceful quit/destroy.
-        try:
-            plt.close('all')
-        except Exception:
-            pass
-        if close_app_on_plot_close:
-            try:
-                app_obj = globals().get('app', None)
-                if app_obj is not None:
-                    try:
-                        app_obj.quit()
-                    except Exception:
-                        pass
-                    try:
-                        app_obj.destroy()
-                    except Exception:
-                        pass
-                else:
-                    try:
-                        root = tk._default_root
-                        if root is not None:
-                            try:
-                                root.quit()
-                            except Exception:
-                                pass
-                            try:
-                                root.destroy()
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+        plt.show(block=False)
+        # Don't close the figures immediately - let the user close them manually
         return
 
     else:
@@ -670,72 +718,48 @@ def run_plotting(data_path_str, dictionary_name_str, different_batches_str, numb
 
         # Save figures and data before displaying (os._exit after show would prevent saving)
         try:
-            plot_name = 'cap-vs-cycle_' + str(data_path.parts[-2])
+            # Build filename base that includes both the experiment folder and the data folder
+            # Example: cap-vs-cycle_<Experiment>-<data>
+            plot_filename_base = f"cap-vs-cycle_{data_path.parts[-2]}-{data_path.parts[-1]}"
             parent_dir = Path(data_path).parent
 
-            plt.savefig(os.path.join(str(parent_dir), plot_name))
-            plt.savefig(os.path.join(str(parent_dir), str(f'{plot_name}.svg')))
-            plt.savefig(os.path.join(str(parent_dir), str(f'{plot_name}.pdf')))
-            pickle.dump(fig, open((os.path.join(str(parent_dir), plot_name) + '.pickle'), 'wb'))
+            # Save figures (PNG/SVG/PDF) based on user selection and a pickled figure for later editing
+            plot_path = os.path.join(str(parent_dir), plot_filename_base)
+            if save_png:
+                plt.savefig(f"{plot_path}.png")
+            if save_svg:
+                plt.savefig(f"{plot_path}.svg")
+            if save_pdf:
+                plt.savefig(f"{plot_path}.pdf")
+            pickle.dump(fig, open(os.path.join(str(parent_dir), f'{plot_filename_base}.pickle'), 'wb'))
+            # Export the numeric results to CSV (TXT) if enabled
+            if save_txt:
+                save_file_name = os.path.join(str(parent_dir), f'{plot_filename_base}.txt')
 
-            save_file_name = os.path.join(str(parent_dir), str(f'{plot_name}.txt'))
+                df_to_save = pd.DataFrame({'Cycle': np.arange(1, max_len + 1)})
 
-            df_to_save = pd.DataFrame({'Cycle': np.arange(1, max_len + 1)})
+                for counter_var in range(0, different_batches):
+                    batch_name_part = data_file_names[cell_numeration[counter_var]]
+                    df_to_save[f'{batch_name_part} mean discharge capacity'] = specific_discharge_capacity[
+                        f'{batch_name_part} mean discharge capacity']
+                    df_to_save[f'{batch_name_part} stddev discharge capacity'] = specific_discharge_capacity[
+                        f'{batch_name_part} stddev discharge capacity']
+                    df_to_save[f'{batch_name_part} mean charge capacity'] = specific_charge_capacity[
+                        f'{batch_name_part} mean charge capacity']
+                    df_to_save[f'{batch_name_part} stddev charge capacity'] = specific_charge_capacity[
+                        f'{batch_name_part} stddev charge capacity']
+                    df_to_save[f'{batch_name_part} mean CE'] = coulombic_efficiency[f'{batch_name_part} mean']
+                    df_to_save[f'{batch_name_part} stddev CE'] = coulombic_efficiency[f'{batch_name_part} stddev']
 
-            for counter_var in range(0, different_batches):
-                batch_name_part = data_file_names[cell_numeration[counter_var]]
-                df_to_save[f'{batch_name_part} mean discharge capacity'] = specific_discharge_capacity[
-                    f'{batch_name_part} mean discharge capacity']
-                df_to_save[f'{batch_name_part} stddev discharge capacity'] = specific_discharge_capacity[
-                    f'{batch_name_part} stddev discharge capacity']
-                df_to_save[f'{batch_name_part} mean charge capacity'] = specific_charge_capacity[
-                    f'{batch_name_part} mean charge capacity']
-                df_to_save[f'{batch_name_part} stddev charge capacity'] = specific_charge_capacity[
-                    f'{batch_name_part} stddev charge capacity']
-                df_to_save[f'{batch_name_part} mean CE'] = coulombic_efficiency[f'{batch_name_part} mean']
-                df_to_save[f'{batch_name_part} stddev CE'] = coulombic_efficiency[f'{batch_name_part} stddev']
-
-            df_to_save.to_csv(save_file_name, sep=',', index=False, na_rep='')
-            print(f"Data has been saved to {save_file_name}.")
+                df_to_save.to_csv(save_file_name, sep=',', index=False, na_rep='')
+                print(f"Data has been saved to {save_file_name}.")
         except Exception as e:
             messagebox.showerror("Error while Saving", f"An error occurred while saving the results: {e}")
             return
 
         messagebox.showinfo("Success", "Plotting completed successfully. The graphs will now be displayed.")
-        plt.show()
-        # Graceful cleanup: close figures and attempt to quit/destroy the Tk root, then return
-        try:
-            plt.close('all')
-        except Exception:
-            pass
-        if close_app_on_plot_close:
-            try:
-                app_obj = globals().get('app', None)
-                if app_obj is not None:
-                    try:
-                        app_obj.quit()
-                    except Exception:
-                        pass
-                    try:
-                        app_obj.destroy()
-                    except Exception:
-                        pass
-                else:
-                    try:
-                        root = tk._default_root
-                        if root is not None:
-                            try:
-                                root.quit()
-                            except Exception:
-                                pass
-                            try:
-                                root.destroy()
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+        plt.show(block=False)
+        # Don't close the figures immediately - let the user close them manually
         return
 
     # Saving is handled before displaying the plots so the process can exit cleanly afterwards.
@@ -1007,6 +1031,37 @@ class PlottingGUI(tk.Tk):
         self.ce_ymax_entry.pack(side='left', padx=5)
         self.ce_ymax_entry.insert(0, "102")
 
+        # --- Save Options ---
+        tk.Label(frame, text="Save Options", font=("Arial", 12, "bold")).pack(fill='x', pady=(15, 5))
+        save_frame = ttk.LabelFrame(frame, text="Select which files to save", padding=(5, 5, 5, 5))
+        save_frame.pack(fill='x', pady=5, padx=5)
+
+        # Image formats
+        img_frame = tk.Frame(save_frame)
+        img_frame.pack(fill='x', pady=(2, 2))
+        tk.Label(img_frame, text="Images:").pack(side='left', padx=(0, 8))
+        self.save_png_var = tk.BooleanVar(value=True)
+        self.save_pdf_var = tk.BooleanVar(value=True)
+        self.save_svg_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(img_frame, text="PNG", variable=self.save_png_var).pack(side='left', padx=4)
+        tk.Checkbutton(img_frame, text="PDF", variable=self.save_pdf_var).pack(side='left', padx=4)
+        tk.Checkbutton(img_frame, text="SVG", variable=self.save_svg_var).pack(side='left', padx=4)
+
+        # Data formats
+        data_frame = tk.Frame(save_frame)
+        data_frame.pack(fill='x', pady=(2, 2))
+        tk.Label(data_frame, text="Data:").pack(side='left', padx=(0, 8))
+        self.save_txt_var = tk.BooleanVar(value=True)
+        self.save_netcdf_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(data_frame, text="TXT (flattened plot)", variable=self.save_txt_var).pack(side='left', padx=4)
+        tk.Checkbutton(data_frame, text="NetCDF (per batch)", variable=self.save_netcdf_var).pack(side='left', padx=4)
+
+        # Raw archive
+        zip_frame = tk.Frame(save_frame)
+        zip_frame.pack(fill='x', pady=(2, 2))
+        self.save_zip_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(zip_frame, text="RAW ZIP (NetCDF archive)", variable=self.save_zip_var).pack(side='left', padx=4)
+
     def create_dict_editor(self, frame):
         tk.Label(frame, text="Edit content of dictionary_HIPOLE.txt:", anchor="w").pack(fill='x', pady=(10, 0))
         self.dict_text = tk.Text(frame, height=20, width=80)
@@ -1096,7 +1151,14 @@ class PlottingGUI(tk.Tk):
             "capacity_ymin": self.capacity_ymin_entry.get(),
             "capacity_ymax": self.capacity_ymax_entry.get(),
             "ce_xmin": self.ce_xmin_entry.get(),
-            "ce_xmax": self.ce_xmax_entry.get()
+            "ce_xmax": self.ce_xmax_entry.get(),
+            # Save options
+            "save_png": bool(self.save_png_var.get()),
+            "save_pdf": bool(self.save_pdf_var.get()),
+            "save_svg": bool(self.save_svg_var.get()),
+            "save_txt": bool(self.save_txt_var.get()),
+            "save_netcdf": bool(self.save_netcdf_var.get()),
+            "save_zip": bool(self.save_zip_var.get()),
         }
         try:
             with open(self.settings_file, 'wb') as f:
@@ -1178,6 +1240,14 @@ class PlottingGUI(tk.Tk):
             self.ce_ymax_entry.delete(0, tk.END)
             self.ce_ymax_entry.insert(0, settings.get("ce_ymax", ""))
 
+            # Load save options (default to True for backward compatibility)
+            self.save_png_var.set(settings.get("save_png", True))
+            self.save_pdf_var.set(settings.get("save_pdf", True))
+            self.save_svg_var.set(settings.get("save_svg", True))
+            self.save_txt_var.set(settings.get("save_txt", True))
+            self.save_netcdf_var.set(settings.get("save_netcdf", True))
+            self.save_zip_var.set(settings.get("save_zip", True))
+
             self.status_label.config(text="Settings loaded successfully.")
         except Exception as e:
             self.status_label.config(text=f"Error loading settings: {e}")
@@ -1228,6 +1298,13 @@ class PlottingGUI(tk.Tk):
                      capacity_xmin_str, capacity_xmax_str, capacity_ymin_str, capacity_ymax_str,
                      ce_plot_title_str, ce_ylabel_text_str, ce_xmin_str, ce_xmax_str, ce_ymin_str, ce_ymax_str,
                      individual_cell_legend_suffix_str,
+                     # Save options
+                     save_png=bool(self.save_png_var.get()),
+                     save_pdf=bool(self.save_pdf_var.get()),
+                     save_svg=bool(self.save_svg_var.get()),
+                     save_txt=bool(self.save_txt_var.get()),
+                     save_netcdf=bool(self.save_netcdf_var.get()),
+                     save_zip=bool(self.save_zip_var.get()),
                      legend_font_size=legend_font_size,
                      legend_font_family=legend_font_family,
                      axis_label_font_size=axis_label_font_size,
