@@ -47,6 +47,7 @@ def run_plotting(
     save_txt=True,
     save_netcdf=True,
     save_zip=True,
+    progress_callback=None,
 ):
     """Core logic for voltage vs specific capacity plotting.
 
@@ -126,6 +127,9 @@ def run_plotting(
 
     # Main loop to read and process each data file
     for idx, filename in enumerate(data_file_names):
+        if progress_callback:
+            progress_callback(f"Lade Datei: {filename}...")
+        
         file_path = data_path / filename
 
         df = None
@@ -137,12 +141,18 @@ def run_plotting(
                 import yadg
                 import json
             except Exception:
-                print(f"yadg not available — falling back to header parsing for {filename}.")
+                msg = f"yadg not available — falling back to header parsing for {filename}."
+                print(msg)
+                if progress_callback:
+                    progress_callback(f"  ⚠ {msg}")
             else:
                 try:
                     ds_raw = yadg.extractors.extract(filetype='eclab.mpr', path=str(file_path))
                 except Exception as e:
-                    print(f"Warning: yadg failed to parse {filename}: {e}. Falling back to header parsing.")
+                    msg = f"Warning: yadg failed to parse {filename}: {e}. Falling back to header parsing."
+                    print(msg)
+                    if progress_callback:
+                        progress_callback(f"  ⚠ {msg}")
                 else:
                     # Extract active material mass from original_metadata if present
                     mass_g = None
@@ -179,11 +189,19 @@ def run_plotting(
                             mass_g = mg / 1000.0
                             weight_dict[filename] = mass_g
                             print(f"Active mass for {filename}: {mg} mg")
+                            if progress_callback:
+                                progress_callback(f"  → Aktivmaterialgewicht: {mg} mg ({mass_g:.4f} g)")
                     except Exception as e:
-                        print(f"Warning: error reading metadata for {filename}: {e}")
+                        msg = f"Warning: error reading metadata for {filename}: {e}"
+                        print(msg)
+                        if progress_callback:
+                            progress_callback(f"  ⚠ {msg}")
 
                     if mass_g is None:
-                        print(f"Warning: No active material mass found in {filename}. Skipping file.")
+                        msg = f"Warning: No active material mass found in {filename}. Skipping file."
+                        print(msg)
+                        if progress_callback:
+                            progress_callback(f"  ⚠ {msg}")
                     else:
                         # Convert datatree -> xarray Dataset if needed
                         try:
@@ -575,7 +593,18 @@ class VoltVsCapGUI(tk.Tk):
         # Initialize the main tkinter window
         super().__init__()
         self.title("Voltage vs. Capacity Plotting Tool")
-        self.geometry("800x700")
+        self.geometry("1200x900")
+        self.minsize(1000, 700)
+        
+        # Modern color scheme
+        self.bg_color = "#f5f6fa"
+        self.accent_color = "#4834df"
+        self.secondary_color = "#686de0"
+        self.success_color = "#26de81"
+        self.text_color = "#2f3640"
+        
+        self.configure(bg=self.bg_color)
+        
         self.settings_file = "last_volt_cap_settings.pkl"
         self.default_data_path = r"C:\Users\ro45vij\Desktop\AA_Data-Processing\AA_Plotting\E4a+b+c\data"
         self.default_dict_file = "dictionary_HIPOLE.txt"
@@ -585,45 +614,99 @@ class VoltVsCapGUI(tk.Tk):
 
     def create_widgets(self):
         """Creates all the GUI widgets and organizes them using a notebook layout."""
+        # Progress/Log text widget at top
+        log_frame = tk.Frame(self, bg=self.bg_color)
+        log_frame.pack(side="top", fill="x", padx=15, pady=(15, 5))
+        tk.Label(log_frame, text="Progress Log:", font=("Segoe UI", 11, "bold"), 
+                bg=self.bg_color, fg=self.text_color).pack(anchor="w", pady=(0, 5))
+        self.progress_text = tk.Text(log_frame, height=8, wrap="word", state="disabled", 
+                                    bg="#ffffff", fg=self.text_color, font=("Consolas", 9),
+                                    relief="flat", borderwidth=2, highlightthickness=1,
+                                    highlightbackground="#dfe6e9", highlightcolor=self.accent_color)
+        self.progress_text.pack(fill="x", pady=(0, 0))
+        
         # Status bar at the bottom of the window
-        self.status_label = tk.Label(self, text="", bd=1, relief="sunken", anchor="w")
+        self.status_label = tk.Label(self, text="Ready", bd=0, relief="flat", anchor="w",
+                                    bg="#dfe6e9", fg=self.text_color, font=("Segoe UI", 9),
+                                    padx=10, pady=5)
         self.status_label.pack(side="bottom", fill="x")
 
         # Create a notebook widget with multiple tabs for different settings
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('TNotebook', background=self.bg_color, borderwidth=0)
+        style.configure('TNotebook.Tab', padding=[20, 10], font=("Segoe UI", 10),
+                       background="#ffffff", foreground=self.text_color)
+        style.map('TNotebook.Tab', background=[('selected', self.accent_color)],
+                 foreground=[('selected', '#ffffff')])
+        
         self.notebook = ttk.Notebook(self)
-        self.notebook.pack(expand=True, fill='both', padx=10, pady=10)
+        self.notebook.pack(expand=True, fill='both', padx=15, pady=(10, 5))
 
-        # Tab for main input settings (data paths, cycles)
-        self.main_frame = tk.Frame(self.notebook, padx=10, pady=10)
-        self.notebook.add(self.main_frame, text="Main Settings")
+        # Tab for main input settings (data paths, cycles) - with scrollbar
+        main_container = tk.Frame(self.notebook, bg="#ffffff")
+        self.notebook.add(main_container, text="Main Settings")
+        main_canvas = tk.Canvas(main_container, bg="#ffffff", highlightthickness=0)
+        main_scrollbar = tk.Scrollbar(main_container, orient="vertical", command=main_canvas.yview)
+        self.main_frame = tk.Frame(main_canvas, padx=20, pady=20, bg="#ffffff")
+        self.main_frame.bind("<Configure>", lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all")))
+        main_canvas.create_window((0, 0), window=self.main_frame, anchor="nw")
+        main_canvas.configure(yscrollcommand=main_scrollbar.set)
+        main_canvas.pack(side="left", fill="both", expand=True)
+        main_scrollbar.pack(side="right", fill="y")
         self.create_main_inputs(self.main_frame)
 
-        # Tab for plot customization (title, labels, colors)
-        self.plot_frame = tk.Frame(self.notebook, padx=10, pady=10)
-        self.notebook.add(self.plot_frame, text="Plot Customization")
+        # Tab for plot customization (title, labels, colors) - with scrollbar
+        plot_container = tk.Frame(self.notebook, bg="#ffffff")
+        self.notebook.add(plot_container, text="Plot Customization")
+        plot_canvas = tk.Canvas(plot_container, bg="#ffffff", highlightthickness=0)
+        plot_scrollbar = tk.Scrollbar(plot_container, orient="vertical", command=plot_canvas.yview)
+        self.plot_frame = tk.Frame(plot_canvas, padx=20, pady=20, bg="#ffffff")
+        self.plot_frame.bind("<Configure>", lambda e: plot_canvas.configure(scrollregion=plot_canvas.bbox("all")))
+        plot_canvas.create_window((0, 0), window=self.plot_frame, anchor="nw")
+        plot_canvas.configure(yscrollcommand=plot_scrollbar.set)
+        plot_canvas.pack(side="left", fill="both", expand=True)
+        plot_scrollbar.pack(side="right", fill="y")
         self.create_plot_customization(self.plot_frame)
 
-        # Tab for editing the legend dictionary
-        self.dict_frame = tk.Frame(self.notebook, padx=10, pady=10)
-        self.notebook.add(self.dict_frame, text="Edit Dictionary")
+        # Tab for editing the legend dictionary - with scrollbar
+        dict_container = tk.Frame(self.notebook, bg="#ffffff")
+        self.notebook.add(dict_container, text="Edit Dictionary")
+        dict_canvas = tk.Canvas(dict_container, bg="#ffffff", highlightthickness=0)
+        dict_scrollbar = tk.Scrollbar(dict_container, orient="vertical", command=dict_canvas.yview)
+        self.dict_frame = tk.Frame(dict_canvas, padx=20, pady=20, bg="#ffffff")
+        self.dict_frame.bind("<Configure>", lambda e: dict_canvas.configure(scrollregion=dict_canvas.bbox("all")))
+        dict_canvas.create_window((0, 0), window=self.dict_frame, anchor="nw")
+        dict_canvas.configure(yscrollcommand=dict_scrollbar.set)
+        dict_canvas.pack(side="left", fill="both", expand=True)
+        dict_scrollbar.pack(side="right", fill="y")
         self.create_dict_editor(self.dict_frame)
 
         # Frame for action buttons at the bottom of the window
-        button_frame = tk.Frame(self)
-        button_frame.pack(side="bottom", pady=10)
-        tk.Button(button_frame, text="Restore Last Settings", command=self.load_settings, font=("Arial", 10)).pack(
-            side='left', padx=5)
-        tk.Button(button_frame, text="Run Plotting", command=self.on_run_click, font=("Arial", 12, "bold"),
-                  bg="lightblue", relief="raised", padx=10, pady=5).pack(side='left', padx=5)
+        button_frame = tk.Frame(self, bg=self.bg_color)
+        button_frame.pack(side="bottom", pady=15)
+        tk.Button(button_frame, text="Restore Last Settings", command=self.load_settings,
+                  font=("Segoe UI", 10), bg="#ffffff", fg=self.text_color, relief="flat",
+                  padx=15, pady=8, cursor="hand2", activebackground="#dfe6e9").pack(side='left', padx=5)
+        tk.Button(button_frame, text="Run Plotting", command=self.on_run_click,
+                  font=("Segoe UI", 11, "bold"), bg=self.accent_color, fg="#ffffff",
+                  relief="flat", padx=20, pady=10, cursor="hand2",
+                  activebackground=self.secondary_color).pack(side='left', padx=5)
 
     def create_main_inputs(self, frame):
         """Creates widgets for data path, dictionary file, and cycle selection."""
+        # Configure grid weights for responsive layout
+        frame.grid_columnconfigure(1, weight=1)
+        
         labels = ["Data Directory:", "Dictionary File:", "Cycles to Plot (comma-separated):"]
         self.entries = {}
         for i, text in enumerate(labels):
-            tk.Label(frame, text=text, anchor="w", font=("Arial", 10)).grid(row=i, column=0, sticky="w", pady=5)
-            entry = tk.Entry(frame, width=60)
-            entry.grid(row=i, column=1, padx=5, pady=5)
+            tk.Label(frame, text=text, anchor="w", font=("Segoe UI", 10),
+                    bg="#ffffff", fg=self.text_color).grid(row=i, column=0, sticky="w", pady=8, padx=(0, 10))
+            entry = tk.Entry(frame, font=("Segoe UI", 10), relief="flat",
+                           borderwidth=2, highlightthickness=1,
+                           highlightbackground="#dfe6e9", highlightcolor=self.accent_color)
+            entry.grid(row=i, column=1, sticky="ew", padx=(0, 5), pady=8)
             self.entries[text] = entry
 
         # Insert default values into the entry fields
@@ -632,8 +715,14 @@ class VoltVsCapGUI(tk.Tk):
         self.entries["Cycles to Plot (comma-separated):"].insert(0, "25")
 
         # Buttons to open file dialogs for browsing
-        tk.Button(frame, text="Browse", command=self.browse_data_path).grid(row=0, column=2, padx=5)
-        tk.Button(frame, text="Browse", command=self.browse_dictionary_file).grid(row=1, column=2, padx=5)
+        tk.Button(frame, text="Browse", command=self.browse_data_path,
+                 font=("Segoe UI", 9), bg="#ffffff", fg=self.text_color,
+                 relief="flat", padx=12, pady=6, cursor="hand2",
+                 activebackground="#dfe6e9").grid(row=0, column=2, padx=5)
+        tk.Button(frame, text="Browse", command=self.browse_dictionary_file,
+                 font=("Segoe UI", 9), bg="#ffffff", fg=self.text_color,
+                 relief="flat", padx=12, pady=6, cursor="hand2",
+                 activebackground="#dfe6e9").grid(row=1, column=2, padx=5)
 
         # Checkbox for handling the special case of the first cycle
         self.first_cycle_discharge_only_var = tk.BooleanVar()
@@ -642,15 +731,23 @@ class VoltVsCapGUI(tk.Tk):
             text="First cycle is discharge only",
             variable=self.first_cycle_discharge_only_var,
             onvalue=True,
-            offvalue=False
+            offvalue=False,
+            font=("Segoe UI", 9), bg="#ffffff", fg=self.text_color,
+            activebackground="#ffffff", selectcolor="#ffffff"
         )
         self.first_cycle_discharge_only_checkbox.grid(row=3, column=0, columnspan=3, sticky="w", pady=10)
         
         # --- TAB BUTTONS: ensure controls are available on small screens ---
-        btn_frame = tk.Frame(frame)
+        btn_frame = tk.Frame(frame, bg="#ffffff")
         btn_frame.grid(row=30, column=0, columnspan=3, pady=8, sticky="w")
-        tk.Button(btn_frame, text="Restore Last Settings", command=self.load_settings, font=("Arial", 10)).pack(side='left', padx=5)
-        tk.Button(btn_frame, text="Run Plotting", command=self.on_run_click, font=("Arial", 10, "bold"), bg="lightblue").pack(side='left', padx=5)
+        tk.Button(btn_frame, text="Restore Last Settings", command=self.load_settings,
+                 font=("Segoe UI", 9), bg="#ffffff", fg=self.text_color,
+                 relief="flat", padx=12, pady=6, cursor="hand2",
+                 activebackground="#dfe6e9").pack(side='left', padx=5)
+        tk.Button(btn_frame, text="Run Plotting", command=self.on_run_click,
+                 font=("Segoe UI", 10, "bold"), bg=self.accent_color, fg="#ffffff",
+                 relief="flat", padx=15, pady=8, cursor="hand2",
+                 activebackground=self.secondary_color).pack(side='left', padx=5)
 
     def create_plot_customization(self, frame):
         """Creates widgets for customizing the plot's appearance."""
@@ -798,6 +895,16 @@ class VoltVsCapGUI(tk.Tk):
         dict_tab_btn_frame.pack(pady=5)
         tk.Button(dict_tab_btn_frame, text="Restore Last Settings", command=self.load_settings, font=("Arial", 10)).pack(side='left', padx=5)
         tk.Button(dict_tab_btn_frame, text="Run Plotting", command=self.on_run_click, font=("Arial", 10, "bold"), bg="lightblue").pack(side='left', padx=5)
+
+    def log_progress(self, message):
+        """Append a timestamped message to the progress log."""
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.progress_text.config(state="normal")
+        self.progress_text.insert(tk.END, f"[{timestamp}] {message}\n")
+        self.progress_text.see(tk.END)
+        self.progress_text.config(state="disabled")
+        self.update_idletasks()
 
     def browse_data_path(self):
         """Opens a file dialog for the user to select the data directory."""
@@ -951,6 +1058,16 @@ class VoltVsCapGUI(tk.Tk):
         Action handler for the "Run Plotting" button.
         It saves the current settings and calls the main plotting function with user inputs.
         """
+        import time
+        
+        # Clear previous log
+        self.progress_text.config(state="normal")
+        self.progress_text.delete(1.0, tk.END)
+        self.progress_text.config(state="disabled")
+        
+        self.log_progress("Starting plotting process...")
+        self.log_progress("Reading settings from GUI...")
+        
         self.save_settings()
         # Retrieve all input values from the GUI
         data_path_str = self.entries["Data Directory:"].get()
@@ -993,28 +1110,42 @@ class VoltVsCapGUI(tk.Tk):
         })
 
         # Call the core plotting function with all the collected parameters
-        run_plotting(
-            data_path_str,
-            dictionary_name_str,
-            cycle_numbers_str,
-            plot_title_str,
-            xlabel_text_str,
-            ylabel_text_str,
-            color_list_str,
-            alpha_list_str,
-            xmin_str,
-            xmax_str,
-            ymin_str,
-            ymax_str,
-            first_cycle_discharge_only,
-            close_app_on_plot_close=False,
-            save_png=bool(self.save_png_var.get()),
-            save_pdf=bool(self.save_pdf_var.get()),
-            save_svg=bool(self.save_svg_var.get()),
-            save_txt=bool(self.save_txt_var.get()),
-            save_netcdf=bool(self.save_netcdf_var.get()),
-            save_zip=bool(self.save_zip_var.get()),
-        )  # Keep GUI open by default when plot closes
+        start_time = time.time()
+        self.log_progress("Calling plotting function...")
+        
+        try:
+            run_plotting(
+                data_path_str,
+                dictionary_name_str,
+                cycle_numbers_str,
+                plot_title_str,
+                xlabel_text_str,
+                ylabel_text_str,
+                color_list_str,
+                alpha_list_str,
+                xmin_str,
+                xmax_str,
+                ymin_str,
+                ymax_str,
+                first_cycle_discharge_only,
+                close_app_on_plot_close=False,
+                save_png=bool(self.save_png_var.get()),
+                save_pdf=bool(self.save_pdf_var.get()),
+                save_svg=bool(self.save_svg_var.get()),
+                save_txt=bool(self.save_txt_var.get()),
+                save_netcdf=bool(self.save_netcdf_var.get()),
+                save_zip=bool(self.save_zip_var.get()),
+                progress_callback=self.log_progress,
+            )  # Keep GUI open by default when plot closes
+            
+            elapsed_time = time.time() - start_time
+            self.log_progress(f"Plotting complete! Took {elapsed_time:.1f}s")
+        except Exception as e:
+            elapsed_time = time.time() - start_time
+            error_msg = f"ERROR: Plotting failed after {elapsed_time:.1f}s: {str(e)}"
+            self.log_progress(error_msg)
+            import traceback
+            self.log_progress(f"  Details: {traceback.format_exc()}")
 
 
 if __name__ == '__main__':

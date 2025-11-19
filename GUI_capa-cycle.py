@@ -63,6 +63,7 @@ def run_plotting(
     tick_label_font_size="12",
     tick_label_font_family="default",
     close_app_on_plot_close=False,
+    progress_callback=None,
 ):
     """
     This function contains the core plotting logic, refactored to accept user inputs.
@@ -148,20 +149,32 @@ def run_plotting(
 
         # Only process .mpr files
         if Path(filename).suffix.lower() != '.mpr':
-            print(f"Skipping non-mpr file: {filename}")
+            msg = f"Skipping non-mpr file: {filename}"
+            print(msg)
+            if progress_callback:
+                progress_callback(f"  → {msg}")
             continue
+        
+        if progress_callback:
+            progress_callback(f"Lade Datei: {filename}...")
 
         try:
             import yadg
             import json
         except Exception:
-            print("yadg or json module not available. Ensure yadg is installed.")
+            error_msg = "yadg or json module not available. Ensure yadg is installed."
+            print(error_msg)
+            if progress_callback:
+                progress_callback(f"ERROR: {error_msg}")
             break
 
         try:
             ds_raw = yadg.extractors.extract(filetype='eclab.mpr', path=str(file_path))
         except Exception as e:
-            print(f"Warning: failed to parse {filename} with yadg: {e}. Skipping.")
+            error_msg = f"Warning: failed to parse {filename} with yadg: {e}. Skipping."
+            print(error_msg)
+            if progress_callback:
+                progress_callback(f"  ⚠ {error_msg}")
             continue
 
         # read active material mass from original_metadata (JSON-like)
@@ -199,11 +212,19 @@ def run_plotting(
                 mass_g = mg / 1000.0
                 weight_dict[filename] = mass_g
                 print(f"Active mass for {filename}: {mg} mg")
+                if progress_callback:
+                    progress_callback(f"  → Aktivmaterialgewicht: {mg} mg ({mass_g:.4f} g)")
         except Exception as e:
-            print(f"Warning: error reading metadata for {filename}: {e}")
+            error_msg = f"Warning: error reading metadata for {filename}: {e}"
+            print(error_msg)
+            if progress_callback:
+                progress_callback(f"  ⚠ {error_msg}")
 
         if mass_g is None:
-            print(f"Warning: No active material mass found for {filename}. Skipping file.")
+            error_msg = f"Warning: No active material mass found for {filename}. Skipping file."
+            print(error_msg)
+            if progress_callback:
+                progress_callback(f"  ⚠ {error_msg}")
             continue
 
         # Convert datatree -> xarray Dataset if needed
@@ -770,7 +791,17 @@ class PlottingGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Advanced Plotting Tool")
-        self.geometry("1000x800")
+        self.geometry("1200x900")
+        self.minsize(1000, 700)
+        
+        # Modern color scheme
+        self.bg_color = "#f5f6fa"
+        self.accent_color = "#4834df"
+        self.secondary_color = "#686de0"
+        self.success_color = "#26de81"
+        self.text_color = "#2f3640"
+        
+        self.configure(bg=self.bg_color)
 
         self.settings_file = "last_used_settings.pkl"
         self.default_dict_file = "dictionary_HIPOLE.txt"
@@ -780,48 +811,95 @@ class PlottingGUI(tk.Tk):
         self.load_settings()
 
     def create_widgets(self):
-        # Create a notebook (tabbed interface)
-        self.notebook = ttk.Notebook(self)
-        self.notebook.pack(expand=True, fill='both', padx=10, pady=10)
-
-        # Create buttons and status label first, so they appear at top
-        button_frame = tk.Frame(self)
-        button_frame.pack(side="top", pady=10)  # <--- move above notebook
-        tk.Button(button_frame, text="Restore Last Settings",
-                  command=self.load_settings, font=("Arial", 10)).pack(side='left', padx=5)
-        tk.Button(button_frame, text="Run Plotting", command=self.on_run_click,
-                  font=("Arial", 12, "bold"), bg="lightblue", relief="raised", padx=10, pady=5).pack(side='left',
-                                                                                                     padx=5)
-
-        self.status_label = tk.Label(self, text="", bd=1, relief="sunken", anchor="w")
+        # Progress/Log text widget at top
+        log_frame = tk.Frame(self, bg=self.bg_color)
+        log_frame.pack(side="top", fill="x", padx=15, pady=(15, 5))
+        tk.Label(log_frame, text="Progress Log:", font=("Segoe UI", 11, "bold"), 
+                bg=self.bg_color, fg=self.text_color).pack(anchor="w", pady=(0, 5))
+        self.progress_text = tk.Text(log_frame, height=8, wrap="word", state="disabled", 
+                                    bg="#ffffff", fg=self.text_color, font=("Consolas", 9),
+                                    relief="flat", borderwidth=2, highlightthickness=1,
+                                    highlightbackground="#dfe6e9", highlightcolor=self.accent_color)
+        self.progress_text.pack(fill="x", pady=(0, 0))
+        progress_scrollbar = tk.Scrollbar(log_frame, command=self.progress_text.yview)
+        self.progress_text.config(yscrollcommand=progress_scrollbar.set)
+        
+        # Status bar at bottom
+        self.status_label = tk.Label(self, text="Ready", bd=0, relief="flat", anchor="w",
+                                    bg="#dfe6e9", fg=self.text_color, font=("Segoe UI", 9),
+                                    padx=10, pady=5)
         self.status_label.pack(side="bottom", fill="x")
+        
+        # Buttons at bottom
+        button_frame = tk.Frame(self, bg=self.bg_color)
+        button_frame.pack(side="bottom", pady=15)
+        tk.Button(button_frame, text="Restore Last Settings",
+                  command=self.load_settings, font=("Segoe UI", 10),
+                  bg="#ffffff", fg=self.text_color, relief="flat",
+                  padx=15, pady=8, cursor="hand2",
+                  activebackground="#dfe6e9").pack(side='left', padx=5)
+        tk.Button(button_frame, text="Run Plotting", command=self.on_run_click,
+                  font=("Segoe UI", 11, "bold"), bg=self.accent_color, fg="#ffffff",
+                  relief="flat", padx=20, pady=10, cursor="hand2",
+                  activebackground=self.secondary_color).pack(side='left', padx=5)
 
-        # Create a notebook (tabbed interface)
+        # Create a notebook (tabbed interface) with modern styling
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('TNotebook', background=self.bg_color, borderwidth=0)
+        style.configure('TNotebook.Tab', padding=[20, 10], font=("Segoe UI", 10),
+                       background="#ffffff", foreground=self.text_color)
+        style.map('TNotebook.Tab', background=[('selected', self.accent_color)],
+                 foreground=[('selected', '#ffffff')])
+        
         self.notebook = ttk.Notebook(self)
-        self.notebook.pack(expand=True, fill='both', padx=10, pady=10)
+        self.notebook.pack(expand=True, fill='both', padx=15, pady=(10, 5))
 
-        # Tab 1: Main Inputs
-        self.main_frame = tk.Frame(self.notebook, padx=10, pady=10)
-        self.notebook.add(self.main_frame, text="Main Settings")
+        # Tab 1: Main Inputs - with scrollbar
+        main_container = tk.Frame(self.notebook, bg="#ffffff")
+        self.notebook.add(main_container, text="Main Settings")
+        main_canvas = tk.Canvas(main_container, bg="#ffffff", highlightthickness=0)
+        main_scrollbar = tk.Scrollbar(main_container, orient="vertical", command=main_canvas.yview)
+        self.main_frame = tk.Frame(main_canvas, padx=20, pady=20, bg="#ffffff")
+        self.main_frame.bind("<Configure>", lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all")))
+        main_canvas.create_window((0, 0), window=self.main_frame, anchor="nw")
+        main_canvas.configure(yscrollcommand=main_scrollbar.set)
+        main_canvas.pack(side="left", fill="both", expand=True)
+        main_scrollbar.pack(side="right", fill="y")
         self.create_main_inputs(self.main_frame)
-        # Tab 2: Plot Customization
-        self.plot_frame = tk.Frame(self.notebook, padx=10, pady=10)
+        
+        # Tab 2: Plot Customization (already has internal scrollbar)
+        self.plot_frame = tk.Frame(self.notebook, padx=20, pady=20, bg="#ffffff")
         self.notebook.add(self.plot_frame, text="Plot Customization")
         self.create_plot_customization(self.plot_frame)
 
-        # Tab 3: Dictionary Editor
-        self.dict_frame = tk.Frame(self.notebook, padx=10, pady=10)
-        self.notebook.add(self.dict_frame, text="Edit Dictionary")
+        # Tab 3: Dictionary Editor - with scrollbar
+        dict_container = tk.Frame(self.notebook, bg="#ffffff")
+        self.notebook.add(dict_container, text="Edit Dictionary")
+        dict_canvas = tk.Canvas(dict_container, bg="#ffffff", highlightthickness=0)
+        dict_scrollbar = tk.Scrollbar(dict_container, orient="vertical", command=dict_canvas.yview)
+        self.dict_frame = tk.Frame(dict_canvas, padx=20, pady=20, bg="#ffffff")
+        self.dict_frame.bind("<Configure>", lambda e: dict_canvas.configure(scrollregion=dict_canvas.bbox("all")))
+        dict_canvas.create_window((0, 0), window=self.dict_frame, anchor="nw")
+        dict_canvas.configure(yscrollcommand=dict_scrollbar.set)
+        dict_canvas.pack(side="left", fill="both", expand=True)
+        dict_scrollbar.pack(side="right", fill="y")
         self.create_dict_editor(self.dict_frame)
 
     def create_main_inputs(self, frame):
+        # Configure grid weights for responsive layout
+        frame.grid_columnconfigure(1, weight=1)
+        
         labels = ["Data Directory:", "Dictionary File:", "Number of Batches:",
                   "Cells per Batch (comma-separated):"]
         self.entries = {}
         for i, text in enumerate(labels):
-            tk.Label(frame, text=text, anchor="w", font=("Arial", 10)).grid(row=i, column=0, sticky="w", pady=5)
-            entry = tk.Entry(frame, width=60)
-            entry.grid(row=i, column=1, padx=5, pady=5)
+            tk.Label(frame, text=text, anchor="w", font=("Segoe UI", 10), 
+                    bg="#ffffff", fg=self.text_color).grid(row=i, column=0, sticky="w", pady=8, padx=(0, 10))
+            entry = tk.Entry(frame, font=("Segoe UI", 10), relief="flat", 
+                           borderwidth=2, highlightthickness=1,
+                           highlightbackground="#dfe6e9", highlightcolor=self.accent_color)
+            entry.grid(row=i, column=1, sticky="ew", padx=(0, 5), pady=8)
             self.entries[text] = entry
 
         self.entries["Data Directory:"].insert(0, self.default_data_path)
@@ -831,44 +909,58 @@ class PlottingGUI(tk.Tk):
                                                                   "1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2")
 
         # Browse buttons
-        tk.Button(frame, text="Browse", command=self.browse_data_path).grid(row=0, column=2, padx=5)
-        tk.Button(frame, text="Browse", command=self.browse_dictionary_file).grid(row=1, column=2, padx=5)
+        tk.Button(frame, text="Browse", command=self.browse_data_path,
+                 font=("Segoe UI", 9), bg="#ffffff", fg=self.text_color,
+                 relief="flat", padx=12, pady=6, cursor="hand2",
+                 activebackground="#dfe6e9").grid(row=0, column=2, padx=5)
+        tk.Button(frame, text="Browse", command=self.browse_dictionary_file,
+                 font=("Segoe UI", 9), bg="#ffffff", fg=self.text_color,
+                 relief="flat", padx=12, pady=6, cursor="hand2",
+                 activebackground="#dfe6e9").grid(row=1, column=2, padx=5)
 
         # Radiobuttons for plot options
-        tk.Label(frame, text="CE Graph:", anchor="w", font=("Arial", 10)).grid(row=4, column=0, sticky="w", pady=5)
+        tk.Label(frame, text="CE Graph:", anchor="w", font=("Segoe UI", 10),
+                bg="#ffffff", fg=self.text_color).grid(row=4, column=0, sticky="w", pady=8, padx=(0, 10))
         self.ce_graph_var = tk.StringVar(value="Yes")
-        tk.Radiobutton(frame, text="Yes", variable=self.ce_graph_var, value="Yes").grid(row=4, column=1, sticky="w")
-        tk.Radiobutton(frame, text="No", variable=self.ce_graph_var, value="No").grid(row=4, column=1, padx=40,
-                                                                                      sticky="w")
+        tk.Radiobutton(frame, text="Yes", variable=self.ce_graph_var, value="Yes",
+                      font=("Segoe UI", 9), bg="#ffffff", fg=self.text_color,
+                      activebackground="#ffffff", selectcolor="#ffffff").grid(row=4, column=1, sticky="w")
+        tk.Radiobutton(frame, text="No", variable=self.ce_graph_var, value="No",
+                      font=("Segoe UI", 9), bg="#ffffff", fg=self.text_color,
+                      activebackground="#ffffff", selectcolor="#ffffff").grid(row=4, column=1, padx=60, sticky="w")
 
-        tk.Label(frame, text="Capacity Plot Mode:", anchor="w", font=("Arial", 10)).grid(row=5, column=0, sticky="w",
-                                                                                         pady=5)
+        tk.Label(frame, text="Capacity Plot Mode:", anchor="w", font=("Segoe UI", 10),
+                bg="#ffffff", fg=self.text_color).grid(row=5, column=0, sticky="w", pady=8, padx=(0, 10))
         self.capacity_plot_mode_var = tk.StringVar(value="both")
-        tk.Radiobutton(frame, text="Discharge", variable=self.capacity_plot_mode_var, value="discharge").grid(row=5,
-                                                                                                              column=1,
-                                                                                                              sticky="w")
-        tk.Radiobutton(frame, text="Charge", variable=self.capacity_plot_mode_var, value="charge").grid(row=5, column=1,
-                                                                                                        padx=80,
-                                                                                                        sticky="w")
-        tk.Radiobutton(frame, text="Both", variable=self.capacity_plot_mode_var, value="both").grid(row=5, column=1,
-                                                                                                    padx=160,
-                                                                                                    sticky="w")
+        tk.Radiobutton(frame, text="Discharge", variable=self.capacity_plot_mode_var, value="discharge",
+                      font=("Segoe UI", 9), bg="#ffffff", fg=self.text_color,
+                      activebackground="#ffffff", selectcolor="#ffffff").grid(row=5, column=1, sticky="w")
+        tk.Radiobutton(frame, text="Charge", variable=self.capacity_plot_mode_var, value="charge",
+                      font=("Segoe UI", 9), bg="#ffffff", fg=self.text_color,
+                      activebackground="#ffffff", selectcolor="#ffffff").grid(row=5, column=1, padx=100, sticky="w")
+        tk.Radiobutton(frame, text="Both", variable=self.capacity_plot_mode_var, value="both",
+                      font=("Segoe UI", 9), bg="#ffffff", fg=self.text_color,
+                      activebackground="#ffffff", selectcolor="#ffffff").grid(row=5, column=1, padx=180, sticky="w")
 
-        tk.Label(frame, text="First Cycle Discharge Only:", anchor="w", font=("Arial", 10)).grid(row=6, column=0,
-                                                                                                 sticky="w", pady=5)
+        tk.Label(frame, text="First Cycle Discharge Only:", anchor="w", font=("Segoe UI", 10),
+                bg="#ffffff", fg=self.text_color).grid(row=6, column=0, sticky="w", pady=8, padx=(0, 10))
         self.first_cycle_discharge_var = tk.StringVar(value="Yes")
-        tk.Radiobutton(frame, text="Yes", variable=self.first_cycle_discharge_var, value="Yes").grid(row=6, column=1,
-                                                                                                     sticky="w")
-        tk.Radiobutton(frame, text="No", variable=self.first_cycle_discharge_var, value="No").grid(row=6, column=1,
-                                                                                                   padx=40, sticky="w")
+        tk.Radiobutton(frame, text="Yes", variable=self.first_cycle_discharge_var, value="Yes",
+                      font=("Segoe UI", 9), bg="#ffffff", fg=self.text_color,
+                      activebackground="#ffffff", selectcolor="#ffffff").grid(row=6, column=1, sticky="w")
+        tk.Radiobutton(frame, text="No", variable=self.first_cycle_discharge_var, value="No",
+                      font=("Segoe UI", 9), bg="#ffffff", fg=self.text_color,
+                      activebackground="#ffffff", selectcolor="#ffffff").grid(row=6, column=1, padx=60, sticky="w")
 
-        tk.Label(frame, text="Plot Individual Cells:", anchor="w", font=("Arial", 10)).grid(row=7, column=0, sticky="w",
-                                                                                            pady=5)
+        tk.Label(frame, text="Plot Individual Cells:", anchor="w", font=("Segoe UI", 10),
+                bg="#ffffff", fg=self.text_color).grid(row=7, column=0, sticky="w", pady=8, padx=(0, 10))
         self.plot_individual_cells_var = tk.StringVar(value="No")
-        tk.Radiobutton(frame, text="Yes", variable=self.plot_individual_cells_var, value="Yes").grid(row=7, column=1,
-                                                                                                     sticky="w")
-        tk.Radiobutton(frame, text="No", variable=self.plot_individual_cells_var, value="No").grid(row=7, column=1,
-                                                                                                   padx=40, sticky="w")
+        tk.Radiobutton(frame, text="Yes", variable=self.plot_individual_cells_var, value="Yes",
+                      font=("Segoe UI", 9), bg="#ffffff", fg=self.text_color,
+                      activebackground="#ffffff", selectcolor="#ffffff").grid(row=7, column=1, sticky="w")
+        tk.Radiobutton(frame, text="No", variable=self.plot_individual_cells_var, value="No",
+                      font=("Segoe UI", 9), bg="#ffffff", fg=self.text_color,
+                      activebackground="#ffffff", selectcolor="#ffffff").grid(row=7, column=1, padx=60, sticky="w")
 
     def create_plot_customization(self, frame):
         # Store default matplotlib font family for later use
@@ -943,43 +1035,39 @@ class PlottingGUI(tk.Tk):
 
         # General Plot Settings
         tk.Label(scrollable_frame, text="General Plot Settings", font=("Arial", 12, "bold")).pack(fill='x', pady=(10, 5))
-        
-        # Pack the canvas and scrollbar
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
 
-        tk.Label(frame, text="Color List (comma-separated):", anchor="w").pack(fill='x', pady=(5, 0))
-        self.color_text = tk.Text(frame, height=4, width=80)
+        tk.Label(scrollable_frame, text="Color List (comma-separated):", anchor="w").pack(fill='x', pady=(5, 0))
+        self.color_text = tk.Text(scrollable_frame, height=4, width=80)
         self.color_text.pack(pady=5)
         self.color_text.insert(tk.END,
                                "tab:blue, tab:orange, tab:green, tab:red, tab:purple, tab:brown, tab:pink, tab:gray, tab:olive, tab:cyan")
 
-        tk.Label(frame, text="Marker List (comma-separated):", anchor="w").pack(fill='x', pady=(5, 0))
-        self.marker_text = tk.Text(frame, height=4, width=80)
+        tk.Label(scrollable_frame, text="Marker List (comma-separated):", anchor="w").pack(fill='x', pady=(5, 0))
+        self.marker_text = tk.Text(scrollable_frame, height=4, width=80)
         self.marker_text.pack(pady=5)
         self.marker_text.insert(tk.END,
                                 "o, v, ^, <, >, s, p, 2, 3, 4, 8, s, p, P, *, h, H, +, x, X, D, d, |, _, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11")
 
         # --- Capacity Plot Settings ---
-        tk.Label(frame, text="Capacity Plot Settings", font=("Arial", 12, "bold")).pack(fill='x', pady=(15, 5))
+        tk.Label(scrollable_frame, text="Capacity Plot Settings", font=("Arial", 12, "bold")).pack(fill='x', pady=(15, 5))
 
-        tk.Label(frame, text="Capacity Plot Title:", anchor="w").pack(fill='x', pady=(5, 0))
-        self.capacity_title_entry = tk.Entry(frame, width=80)
+        tk.Label(scrollable_frame, text="Capacity Plot Title:", anchor="w").pack(fill='x', pady=(5, 0))
+        self.capacity_title_entry = tk.Entry(scrollable_frame, width=80)
         self.capacity_title_entry.pack(pady=5)
         self.capacity_title_entry.insert(0, "Specific Capacity and Coulombic Efficiency")
 
-        tk.Label(frame, text="Capacity Y-axis Label:", anchor="w").pack(fill='x', pady=(5, 0))
-        self.capacity_ylabel_entry = tk.Entry(frame, width=80)
+        tk.Label(scrollable_frame, text="Capacity Y-axis Label:", anchor="w").pack(fill='x', pady=(5, 0))
+        self.capacity_ylabel_entry = tk.Entry(scrollable_frame, width=80)
         self.capacity_ylabel_entry.pack(pady=5)
         self.capacity_ylabel_entry.insert(0, 'Specific Capacity [mAh $g^{-1}$]')
 
-        tk.Label(frame, text="Individual Cell Legend Suffix:", anchor="w").pack(fill='x', pady=(5, 0))
-        self.individual_cell_legend_suffix_entry = tk.Entry(frame, width=80)
+        tk.Label(scrollable_frame, text="Individual Cell Legend Suffix:", anchor="w").pack(fill='x', pady=(5, 0))
+        self.individual_cell_legend_suffix_entry = tk.Entry(scrollable_frame, width=80)
         self.individual_cell_legend_suffix_entry.pack(pady=5)
         self.individual_cell_legend_suffix_entry.insert(0, "(Cell)")
 
-        tk.Label(frame, text="Capacity X-axis Limits (min, max):", anchor="w").pack(fill='x', pady=(5, 0))
-        cap_xlim_frame = tk.Frame(frame)
+        tk.Label(scrollable_frame, text="Capacity X-axis Limits (min, max):", anchor="w").pack(fill='x', pady=(5, 0))
+        cap_xlim_frame = tk.Frame(scrollable_frame)
         cap_xlim_frame.pack(fill='x')
         self.capacity_xmin_entry = tk.Entry(cap_xlim_frame, width=10)
         self.capacity_xmin_entry.pack(side='left', padx=5)
@@ -987,8 +1075,8 @@ class PlottingGUI(tk.Tk):
         self.capacity_xmax_entry = tk.Entry(cap_xlim_frame, width=10)
         self.capacity_xmax_entry.pack(side='left', padx=5)
 
-        tk.Label(frame, text="Capacity Y-axis Limits (min, max):", anchor="w").pack(fill='x', pady=(5, 0))
-        cap_ylim_frame = tk.Frame(frame)
+        tk.Label(scrollable_frame, text="Capacity Y-axis Limits (min, max):", anchor="w").pack(fill='x', pady=(5, 0))
+        cap_ylim_frame = tk.Frame(scrollable_frame)
         cap_ylim_frame.pack(fill='x')
         self.capacity_ymin_entry = tk.Entry(cap_ylim_frame, width=10)
         self.capacity_ymin_entry.pack(side='left', padx=5)
@@ -998,21 +1086,21 @@ class PlottingGUI(tk.Tk):
         self.capacity_ymax_entry.insert(0, "210")
 
         # --- CE Plot Settings ---
-        tk.Label(frame, text="CE Plot Settings (only used if 'CE Graph' is 'Yes')", font=("Arial", 12, "bold")).pack(
+        tk.Label(scrollable_frame, text="CE Plot Settings (only used if 'CE Graph' is 'Yes')", font=("Arial", 12, "bold")).pack(
             fill='x', pady=(15, 5))
 
-        tk.Label(frame, text="CE Plot Title:", anchor="w").pack(fill='x', pady=(5, 0))
-        self.ce_title_entry = tk.Entry(frame, width=80)
+        tk.Label(scrollable_frame, text="CE Plot Title:", anchor="w").pack(fill='x', pady=(5, 0))
+        self.ce_title_entry = tk.Entry(scrollable_frame, width=80)
         self.ce_title_entry.pack(pady=5)
         self.ce_title_entry.insert(0, "Coulombic Efficiency")
 
-        tk.Label(frame, text="CE Y-axis Label:", anchor="w").pack(fill='x', pady=(5, 0))
-        self.ce_ylabel_entry = tk.Entry(frame, width=80)
+        tk.Label(scrollable_frame, text="CE Y-axis Label:", anchor="w").pack(fill='x', pady=(5, 0))
+        self.ce_ylabel_entry = tk.Entry(scrollable_frame, width=80)
         self.ce_ylabel_entry.pack(pady=5)
         self.ce_ylabel_entry.insert(0, 'CE [%]')
 
-        tk.Label(frame, text="CE X-axis Limits (min, max):", anchor="w").pack(fill='x', pady=(5, 0))
-        ce_xlim_frame = tk.Frame(frame)
+        tk.Label(scrollable_frame, text="CE X-axis Limits (min, max):", anchor="w").pack(fill='x', pady=(5, 0))
+        ce_xlim_frame = tk.Frame(scrollable_frame)
         ce_xlim_frame.pack(fill='x')
         self.ce_xmin_entry = tk.Entry(ce_xlim_frame, width=10)
         self.ce_xmin_entry.pack(side='left', padx=5)
@@ -1020,8 +1108,8 @@ class PlottingGUI(tk.Tk):
         self.ce_xmax_entry = tk.Entry(ce_xlim_frame, width=10)
         self.ce_xmax_entry.pack(side='left', padx=5)
 
-        tk.Label(frame, text="CE Y-axis Limits (min, max):", anchor="w").pack(fill='x', pady=(5, 0))
-        ce_ylim_frame = tk.Frame(frame)
+        tk.Label(scrollable_frame, text="CE Y-axis Limits (min, max):", anchor="w").pack(fill='x', pady=(5, 0))
+        ce_ylim_frame = tk.Frame(scrollable_frame)
         ce_ylim_frame.pack(fill='x')
         self.ce_ymin_entry = tk.Entry(ce_ylim_frame, width=10)
         self.ce_ymin_entry.pack(side='left', padx=5)
@@ -1032,8 +1120,8 @@ class PlottingGUI(tk.Tk):
         self.ce_ymax_entry.insert(0, "102")
 
         # --- Save Options ---
-        tk.Label(frame, text="Save Options", font=("Arial", 12, "bold")).pack(fill='x', pady=(15, 5))
-        save_frame = ttk.LabelFrame(frame, text="Select which files to save", padding=(5, 5, 5, 5))
+        tk.Label(scrollable_frame, text="Save Options", font=("Arial", 12, "bold")).pack(fill='x', pady=(15, 5))
+        save_frame = ttk.LabelFrame(scrollable_frame, text="Select which files to save", padding=(5, 5, 5, 5))
         save_frame.pack(fill='x', pady=5, padx=5)
 
         # Image formats
@@ -1061,6 +1149,10 @@ class PlottingGUI(tk.Tk):
         zip_frame.pack(fill='x', pady=(2, 2))
         self.save_zip_var = tk.BooleanVar(value=True)
         tk.Checkbutton(zip_frame, text="RAW ZIP (NetCDF archive)", variable=self.save_zip_var).pack(side='left', padx=4)
+        
+        # Pack the canvas and scrollbar at the end
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
     def create_dict_editor(self, frame):
         tk.Label(frame, text="Edit content of dictionary_HIPOLE.txt:", anchor="w").pack(fill='x', pady=(10, 0))
@@ -1073,6 +1165,16 @@ class PlottingGUI(tk.Tk):
         tk.Button(dict_button_frame, text="Save Dictionary", command=self.save_dictionary).pack(side='left', padx=5)
 
         self.load_dictionary()  # Load the dictionary on startup
+
+    def log_progress(self, message):
+        """Append a timestamped message to the progress log."""
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.progress_text.config(state="normal")
+        self.progress_text.insert(tk.END, f"[{timestamp}] {message}\n")
+        self.progress_text.see(tk.END)
+        self.progress_text.config(state="disabled")
+        self.update_idletasks()
 
     def browse_data_path(self):
         directory = filedialog.askdirectory(title="Select Data Directory")
@@ -1253,6 +1355,17 @@ class PlottingGUI(tk.Tk):
             self.status_label.config(text=f"Error loading settings: {e}")
 
     def on_run_click(self):
+        import time
+        import threading
+        
+        # Clear previous log
+        self.progress_text.config(state="normal")
+        self.progress_text.delete(1.0, tk.END)
+        self.progress_text.config(state="disabled")
+        
+        self.log_progress("Starting plotting process...")
+        self.log_progress(f"Reading settings from GUI...")
+        
         # Store default matplotlib settings
         original_font_family = plt.rcParams['font.family']
         
@@ -1292,26 +1405,41 @@ class PlottingGUI(tk.Tk):
         tick_label_font_size = self.tick_label_font_size.get()
         tick_label_font_family = self.tick_label_font_family.get()
 
-        run_plotting(data_path_str, dictionary_name_str, different_batches_str, number_of_cells_str,
-                     ce_graph_str, capacity_plot_mode_str, first_cycle_discharge_only_str, plot_individual_cells_str,
-                     color_list_str, marker_list_str, capacity_plot_title_str, capacity_ylabel_text_str,
-                     capacity_xmin_str, capacity_xmax_str, capacity_ymin_str, capacity_ymax_str,
-                     ce_plot_title_str, ce_ylabel_text_str, ce_xmin_str, ce_xmax_str, ce_ymin_str, ce_ymax_str,
-                     individual_cell_legend_suffix_str,
-                     # Save options
-                     save_png=bool(self.save_png_var.get()),
-                     save_pdf=bool(self.save_pdf_var.get()),
-                     save_svg=bool(self.save_svg_var.get()),
-                     save_txt=bool(self.save_txt_var.get()),
-                     save_netcdf=bool(self.save_netcdf_var.get()),
-                     save_zip=bool(self.save_zip_var.get()),
-                     legend_font_size=legend_font_size,
-                     legend_font_family=legend_font_family,
-                     axis_label_font_size=axis_label_font_size,
-                     axis_label_font_family=axis_label_font_family,
-                     tick_label_font_size=tick_label_font_size,
-                     tick_label_font_family=tick_label_font_family,
-                     close_app_on_plot_close=False)
+        start_time = time.time()
+        self.log_progress("Calling plotting function...")
+        
+        try:
+            run_plotting(data_path_str, dictionary_name_str, different_batches_str, number_of_cells_str,
+                         ce_graph_str, capacity_plot_mode_str, first_cycle_discharge_only_str, plot_individual_cells_str,
+                         color_list_str, marker_list_str, capacity_plot_title_str, capacity_ylabel_text_str,
+                         capacity_xmin_str, capacity_xmax_str, capacity_ymin_str, capacity_ymax_str,
+                         ce_plot_title_str, ce_ylabel_text_str, ce_xmin_str, ce_xmax_str, ce_ymin_str, ce_ymax_str,
+                         individual_cell_legend_suffix_str,
+                         # Save options
+                         save_png=bool(self.save_png_var.get()),
+                         save_pdf=bool(self.save_pdf_var.get()),
+                         save_svg=bool(self.save_svg_var.get()),
+                         save_txt=bool(self.save_txt_var.get()),
+                         save_netcdf=bool(self.save_netcdf_var.get()),
+                         save_zip=bool(self.save_zip_var.get()),
+                         legend_font_size=legend_font_size,
+                         legend_font_family=legend_font_family,
+                         axis_label_font_size=axis_label_font_size,
+                         axis_label_font_family=axis_label_font_family,
+                         tick_label_font_size=tick_label_font_size,
+                         tick_label_font_family=tick_label_font_family,
+                         close_app_on_plot_close=False,
+                         progress_callback=self.log_progress)
+            
+            elapsed_time = time.time() - start_time
+            self.log_progress(f"Plotting complete! Took {elapsed_time:.1f}s")
+        except Exception as e:
+            elapsed_time = time.time() - start_time
+            error_msg = f"ERROR: Plotting failed after {elapsed_time:.1f}s: {str(e)}"
+            self.log_progress(error_msg)
+            import traceback
+            self.log_progress(f"  Details: {traceback.format_exc()}")
+
 
 
 if __name__ == '__main__':
