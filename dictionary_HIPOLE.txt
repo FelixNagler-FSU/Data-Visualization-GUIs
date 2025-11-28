@@ -4,7 +4,7 @@
 		'FN_E04a_CC': ['CMC, 10 min ball mill, C-Al, CoinCell'],
 		'FN_E04a_120ulmg-1_CC': ['CMC, C-Al, CoinCell 120 $\mu$g/mg'],
 		'FN_E04a_10ulmg-1_CC': ['CMC, C-Al, CoinCell, 10 $\mu$g/mg'],
-		'FN_E04b': ['CMC, 30 min ball mill, C-Al'],
+		'FN_E04b': ['KetB-S, CMC, Ball Mill'],
 		#'FN_E04b_CC': ['KetB, w/o Autoclave, CMC, Ball Mill, C-Al, CoinCell'],
 	   	'FN_E04b_no-extra-drying_CC': ['CMC, no extra drying, C-Al, CoinCell'],
 	   	'FN_E04b_110dC_CC': ['CMC, Ball Mill, C-Al, CoinCell, 1h@110 dC'],
@@ -15,9 +15,9 @@
 		'FN_E5_10ulg-1_CC': ['PVDF, C-Al, CoinCell, 10 $\mu$g/mg'],
 		'FN_E5_Swagelok': ['PVDF, C-Al, Swagelok'],
 		'FN_E7a': ['PVDF, ThinkyMixer, C-Al, CoinCell'],
-		'FN_E8a_CC': ['CMC, Planetary Mixer, C-Al, CoinCell'],
-		'FN_E8b_CC': ['CMC, Planetary Mixer, Al, 5 mAh/cm²'],
-		'01_FN_E8b_2mm-hole-Li_CC': ['CMC, Planetary Mixer, Al, 2mm Li-hole, 5 mAh/cm²'],
+		'FN_E8a_CC': ['KetB-S, CMC, Planetary Mixer'],
+		'FN_E8b_CC': ['KetB-S, CMC, w/o Li-hole'],
+		'FN_E8b_2mm-hole-Li_CC': ['KetB-S, CMC, Al, w/ Li-hole'],
 		'02_FN_E8b_2mm-hole-Li_CC': ['CMC, Planetary Mixer, Al, 2mm Li-hole, 7 mAh/cm²'],
 		'FN_E8b_1mm-hole-StS_CC': ['CMC, Planetary Mixer, Al, 1mm Spacer-hole, 7.5 mAh/cm²'],
 		'FN_E09_CC': ['KetB, w/ Autoclave, CMC, Ball Mill, C-Al, CoinCell', '', '', ''],
@@ -34,12 +34,24 @@
 		'FN_E13_vorne_new_mT': ['front, new batch, w drying'],
 		'FN_E13_hinten_new_oT': ['back, new batch, wo drying'],
 
+		'20251020_KL_250_450_1400_NaPF6': ['Rashid test'],
+		'250905_KHC-1_02':['Test'],
 
+		'FN_E09_65um_CC':['KetB, 0.59 g/cm³'],
+		'FN_E09_80um_CC':['KetB, 0.48 g/cm³'],
+		'FN_E10_CC':['XPB538'],
+		'FN_E11_CC':['L6'],
 
 
 
                    'dummy_end': ['']
                    }
+
+
+
+
+
+
 
 
 

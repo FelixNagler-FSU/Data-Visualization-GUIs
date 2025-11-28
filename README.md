@@ -2,6 +2,8 @@
 
 From Biologic (.mpr) battery test data to reproducible Matplotlib visualizations and structured exports (TXT, NetCDF, ZIP) via multiple Tkinter GUIs.
 
+---
+
 ## Overview
 
 This repository contains several Python GUI tools to visualize and export Biologic cycling data:
@@ -17,83 +19,188 @@ This repository contains several Python GUI tools to visualize and export Biolog
 Each visualization GUI supports selectable save options (PNG, PDF, SVG, TXT, NetCDF, ZIP) and persists your last settings between runs.
 
 ---
-## Python Installation Options
 
-You only need one working Python distribution. Choose ONE of:
+## Quick Setup Guide
 
-1. Official Python installer (https://www.python.org/downloads/) – simple, fine for venv usage.
-2. Miniforge (recommended for data/science) – lightweight Conda distribution with clean dependency management.
+Follow these steps in order to get started from scratch:
 
-If you already have Python installed (via VS Code prompt or official installer) you can skip Miniforge. If you want easier binary package management (e.g. `netCDF4`, `h5py`), use Miniforge.
+### 1. Download and Install Python 3.12
 
-### Miniforge Steps (Optional but Recommended)
-Download: https://github.com/conda-forge/miniforge#download (get `Miniforge3-Windows-x86_64.exe`)
+**Download:**
+- Go to https://www.python.org/downloads/
+- Download **Python 3.12.x** (latest stable version)
 
-Installer recommendations:
-* Install for "Just Me"
-* Path: `C:\Miniforge3`
-* Add to PATH (optional) – otherwise use the Miniforge Prompt
+**Installation Location:**
+- The installer will suggest: `C:\Users\<YourUsername>\AppData\Local\Programs\Python\Python312`
+- This is the **recommended location** (default)
 
-Verify:
+**Installation Steps:**
+1. Run the downloaded installer
+2. ✅ **CRITICAL:** Check **"Add Python to PATH"** at the bottom of the first screen
+3. Click **"Install Now"**
+4. Wait for installation to complete
+5. Click **"Close"**
+
+**Verify Installation:**
+Open PowerShell (Windows key + type "PowerShell") and run:
 ```powershell
-conda --version
 python --version
 ```
+Should show: `Python 3.12.x`
 
-Optional speed‑up:
-```powershell
-conda install -n base -c conda-forge mamba
-```
+If it says "command not found", Python was not added to PATH. Reinstall and check the PATH option.
 
 ---
-## Best Practice: Global vs Project Environments
 
-| Scope | Use Case | Example Name |
-|-------|----------|--------------|
-| Global Conda env | Shared interactive data analysis tools (Jupyter, linters) | `analysis` |
-| Project-specific env (conda or venv) | Reproducible development & deployment | `.venv` or `dv-guis` |
+### 2. Download and Install Visual Studio Code
 
-Guidelines:
-1. Keep the `base`/global env lean; avoid installing project-specific libs there.
-2. Use a dedicated environment per repository for exact dependency versions.
-3. Pin versions (as in `requirements.txt`) for reproducibility; avoid mixing conda and pip in the same env unless necessary.
-4. Prefer a virtual environment (`venv`) when you only need pure-Python + pip packages; prefer Conda when you rely on compiled libraries, alternative BLAS, or system tools.
+**Download:**
+- Go to https://code.visualstudio.com/
+- Download the **Windows 64-bit** version
 
----
-## Create an Environment (Choose One Method)
+**Installation Steps:**
+1. Run the installer
+2. ✅ **Recommended options to select:**
+   - ✓ Add "Open with Code" action to Windows Explorer context menu
+   - ✓ Add "Open with Code" action to directory context menu
+   - ✓ Add to PATH (enables `code .` command in terminal)
+   - ✓ Register Code as an editor for supported file types
+3. Click **"Next"** → **"Install"**
+4. Launch VS Code when installation completes
 
-### Conda (via Miniforge)
-```powershell
-conda create -n dv-guis -c conda-forge python=3.12
-conda activate dv-guis
-pip install -r requirements.txt
-```
-Unpinned first then freeze:
-```powershell
-pip install -r requirements-no-version.txt
-pip freeze > requirements.txt
-```
-Pros: Good for complex native deps. Cons: Avoid mixing many conda + pip upgrades to prevent conflicts.
+**Install Python Extension:**
+1. In VS Code, click the **Extensions** icon in the left sidebar (or press `Ctrl+Shift+X`)
+2. Search for **"Python"**
+3. Install **"Python"** extension by Microsoft
+4. The **"Pylance"** extension will install automatically (language server for Python)
 
 ---
-### venv (Official Python Installer)
+
+### 3. Download the Git Repository
+
+**Recommended Save Location:**
+```
+C:\Dev\Data-Visualization-GUIs
+```
+
+**Why this specific location?**
+- ✅ Short path (avoids Windows 260 character path limit)
+- ✅ No spaces (prevents issues with some tools)
+- ✅ Not in OneDrive/Dropbox (prevents file locking during data export)
+- ✅ Not in Documents (avoids backup/sync conflicts)
+- ✅ Easy to type and remember
+
+**Method A: Using Git (Recommended)**
+
+If you don't have Git installed:
+1. Download Git from: https://git-scm.com/download/win
+2. Run installer with default options
+3. Restart PowerShell after installation
+
+Then download the repository:
 ```powershell
+# Create the Dev folder
+mkdir C:\Dev
+
+# Navigate into it
+cd C:\Dev
+
+# Clone the repository
+git clone https://github.com/FelixNagler-FSU/Data-Visualization-GUIs.git
+
+# Enter the project folder
+cd Data-Visualization-GUIs
+```
+
+**Method B: Download ZIP (Alternative)**
+
+1. Go to: https://github.com/FelixNagler-FSU/Data-Visualization-GUIs
+2. Click the green **"Code"** button
+3. Click **"Download ZIP"**
+4. Extract the ZIP file to `C:\Dev\Data-Visualization-GUIs`
+   - Right-click the ZIP → "Extract All..."
+   - Choose `C:\Dev` as destination
+   - Rename folder to `Data-Visualization-GUIs` if needed
+
+---
+
+### 4. Open Project in Visual Studio Code
+
+**Option A: From PowerShell**
+```powershell
+cd C:\Dev\Data-Visualization-GUIs
+code .
+```
+
+**Option B: From VS Code**
+1. Open VS Code
+2. Click **File** → **Open Folder...**
+3. Navigate to `C:\Dev\Data-Visualization-GUIs`
+4. Click **"Select Folder"**
+
+---
+
+### 5. Select Python Interpreter in VS Code
+
+1. Press `Ctrl+Shift+P` to open the **Command Palette**
+2. Type: **"Python: Select Interpreter"**
+3. Select your Python 3.12 installation
+   - Should show path like: `C:\Users\...\AppData\Local\Programs\Python\Python312\python.exe`
+   - If multiple versions appear, choose **3.12.x**
+
+---
+
+### 6. Create Virtual Environment and Install Dependencies
+
+A virtual environment isolates this project's packages from your system Python.
+
+**In VS Code:**
+1. Open a new terminal: Press `Ctrl+Shift+ö` (or **Terminal** → **New Terminal**)
+2. Make sure you're in the project folder (should show `C:\Dev\Data-Visualization-GUIs`)
+
+**Run these commands one by one:**
+
+```powershell
+# Create virtual environment in .venv folder
 python -m venv .venv
+
+# Activate the virtual environment
 .\.venv\Scripts\Activate.ps1
+
+# Upgrade pip to latest version
 python -m pip install --upgrade pip
+
+# Install all required packages from requirements.txt
 pip install -r requirements.txt
 ```
-Unpinned then freeze:
+
+**If you get an execution policy error** when activating, run this first:
 ```powershell
-pip install -r requirements-no-version.txt
-pip freeze > requirements.txt
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
-Deactivate: `deactivate` | Re-activate: `.\.venv\Scripts\Activate.ps1`
+Then try activating again.
+
+**Verify packages were installed:**
+```powershell
+pip list
+```
+Should show packages like `matplotlib`, `pandas`, `numpy`, `yadg`, etc.
+
+**After installation, re-select the interpreter:**
+1. Press `Ctrl+Shift+P`
+2. Type: **"Python: Select Interpreter"**
+3. Choose the one with `.venv` in the path:
+   - `.\\.venv\\Scripts\\python.exe` (Recommended)
 
 ---
-## Running the GUIs
 
-Activate your environment first (conda or venv). Then run any script:
+### 7. Run the GUIs
+
+**Make sure your virtual environment is activated!**
+- Your terminal prompt should show `(.venv)` at the beginning
+- If not, run: `.\.venv\Scripts\Activate.ps1`
+
+**Run any GUI:**
 ```powershell
 python GUI_capa-cycle.py
 python GUI_voltage-capa.py
@@ -101,191 +208,126 @@ python GUI_dQ-dE.py
 python GUI_data_export.py
 ```
 
-Plots use the TkAgg backend (requires a working Tk installation—bundled with standard Python on Windows). Close the Matplotlib window to return focus to the GUI without terminating the app.
+The GUI window will open. Close it when done - the terminal will be ready for the next command.
 
 ---
+
+## Daily Workflow (After Initial Setup)
+
+Every time you work on this project:
+
+1. **Open VS Code**
+   - Double-click the folder `C:\Dev\Data-Visualization-GUIs` or
+   - In VS Code: File → Open Recent → Data-Visualization-GUIs
+
+2. **Open Terminal** (if not already open)
+   - Press `Ctrl+Shift+ö` or Terminal → New Terminal
+
+3. **Activate Virtual Environment** (if `(.venv)` is not shown in terminal prompt)
+   ```powershell
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+4. **Run your GUI**
+   ```powershell
+   python GUI_capa-cycle.py
+   ```
+
+5. **When done** (optional - closes virtual environment)
+   ```powershell
+   deactivate
+   ```
+
+---
+
 ## Requirements Files Explained
 
-Two files are provided:
+Two requirements files are provided:
 
-1. `requirements.txt` – Pinned versions (exact `==`) for fully reproducible installs. Use this for production, sharing with collaborators, or archiving analysis states.
-2. `requirements-no-version.txt` – Unpinned, minimal spec. Convenient for quick experimentation or getting the latest compatible releases, but not reproducible.
+| File | Purpose |
+|------|---------|
+| `requirements.txt` | **Pinned versions** (`package==1.2.3`). Use this for reproducible results. |
+| `requirements-no-version.txt` | **Unpinned versions** (`package`). Gets latest compatible versions. |
 
-Why use pinned versions?
-* Guarantee identical behavior across machines and time.
-* Prevent silent API changes from breaking scientific results.
-* Enable reliable bug reports and regression tests.
+**Why pinned versions?**
+- ✅ Identical behavior across different computers
+- ✅ Results stay reproducible over time
+- ✅ Prevents breaking changes from package updates
 
-When to regenerate `requirements.txt`:
-* After intentional upgrades: Install new versions, run your test workflows, then `pip freeze > requirements.txt`.
-* After removing packages: Clean with `pip uninstall ...`, validate, then freeze.
-
-Suggested workflow:
-1. Start from `requirements-no-version.txt` in a fresh env.
-2. Freeze to `requirements.txt` once stable.
-3. Commit both files; treat `requirements.txt` as authoritative for reproducibility.
-
----
-## Updating/Adding Dependencies
-
-To add a new library (example: `netCDF4`):
+**When to update requirements.txt:**
+After adding a new package:
 ```powershell
-pip install netCDF4
+pip install new-package-name
 pip freeze > requirements.txt
-```
-
-For Conda (if binary reliability matters):
-```powershell
-conda activate dv-guis
-conda install -c conda-forge netcdf4
-pip freeze > requirements.txt  # still captures pip-installed packages; conda packages appear as versions resolved.
+git add requirements.txt
+git commit -m "Add new-package-name"
 ```
 
 ---
+
 ## Troubleshooting
 
-| Issue | Suggestion |
-|-------|------------|
-| GUI window unresponsive during export | Confirm you are using the updated `GUI_data_export.py` with threading. |
-| Backend errors (TkAgg) | Ensure you are using CPython from Miniforge (not a stripped-down embedded Python). |
-| Version conflict after mixing conda/pip | Consider recreating env and using only pip with pinned `requirements.txt`. |
-| Different results vs colleague | Verify both used the same `requirements.txt` commit hash. |
+| Problem | Solution |
+|---------|----------|
+| `python: command not found` | Python not added to PATH during installation. Reinstall Python and check "Add to PATH". |
+| Cannot activate `.venv` | Run: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser` |
+| VS Code uses wrong Python | Press `Ctrl+Shift+P` → "Python: Select Interpreter" → Choose `.venv\Scripts\python.exe` |
+| `ModuleNotFoundError: No module named 'X'` | Virtual environment not activated or packages not installed. Run: `.\.venv\Scripts\Activate.ps1` then `pip install -r requirements.txt` |
+| GUI window doesn't appear | Check that matplotlib backend is TkAgg (already set in code). Try running: `python -c "import tkinter; tkinter.Tk()"` |
+| Long path errors when cloning | Move repository to `C:\Dev` (shorter path). Or enable long paths: `git config --system core.longpaths true` |
+| "Cannot find .venv" | You're in wrong directory. Run: `cd C:\Dev\Data-Visualization-GUIs` |
+| GUI freezes during export | Make sure you're using updated `GUI_data_export.py` with threading support |
 
 ---
-## Reproducibility Checklist
 
-Before sharing results or archiving:
-1. Commit the current `requirements.txt`.
-2. Record Python version: `python --version`.
-3. Note OS & architecture (Windows x86_64).
-4. Optionally export full env details:
-	```powershell
-	pip freeze > requirements_frozen.txt
-	```
-## Python & Environment (Condensed)
+## Git Basics (Optional - for Contributing)
 
-Assumption: You install Python 3.12 when VS Code first prompts you (or from https://www.python.org). No Conda needed.
----
-Create a virtual environment once per clone:
+If you want to save your changes or contribute back to the repository:
+
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
+# See what files you changed
+git status
+
+# Stage all changes
+git add .
+
+# Commit with a message
+git commit -m "Describe what you changed"
+
+# Push to GitHub (requires write access)
+git push origin 251022_code-development
+```
+
+**For first-time Git users:**
+Configure your identity (one time):
+```powershell
+git config --global user.name "Your Name"
+git config --global user.email "your.email@example.com"
+```
+
+---
+
+## Advanced: Using Conda/Miniforge (Optional)
+
+If you need better management of compiled libraries (like `netCDF4`, `h5py`) or want multi-language support, consider Miniforge:
+
+**Download:** https://github.com/conda-forge/miniforge#download
+
+**Create environment:**
+```powershell
+conda create -n dv-guis -c conda-forge python=3.12
+conda activate dv-guis
 pip install -r requirements.txt
 ```
-Re-activate later:
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-Deactivate:
-```powershell
-deactivate
-```
+
+**Note:** For most users, the standard Python + venv setup (steps 1-7 above) is sufficient and simpler.
+
+---
+
 ## License
 
 See `LICENSE` for details.
 
-Conda path:
-```powershell
-conda create -n dv-guis -c conda-forge python=3.11
-conda activate dv-guis
-pip install -r requirements.txt
-python GUI_capa-cycle.py
-```
-
-venv path:
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python GUI_voltage-capa.py
-```
-
 ---
-## Getting the Repository
 
-### Option 1: Download ZIP
-On the GitHub page click "Code" > "Download ZIP", extract to a short path (e.g. `C:\Dev\Data-Visualization-GUIs`).
-Activate the venv first, then run any script:
-
-### Option 2: Git Clone (Recommended)
-
-Install Git if you don't have it: https://git-scm.com/download/win
-
-Recommended base directory (avoid OneDrive sync issues & long paths):
-```
-C:\Dev\    (create if it does not exist)
-```
-
-Then clone:
-```powershell
-cd C:\Dev
-git clone https://github.com/FelixNagler-FSU/Data-Visualization-GUIs.git
-cd Data-Visualization-GUIs
-```
-
-If you plan to contribute, optionally create a fork first and clone your fork URL.
-
-
-### Avoid Storing Here
-* Deep nested paths with spaces (e.g. `C:\Users\<name>\Documents\Some Folder\Another Folder\...`) can cause path length issues.
-* Cloud sync folders (OneDrive, Dropbox) may lock files while Python writes figures or NetCDF files.
-
----
-## Visual Studio Code Setup
-
-### 1. Install VS Code
-Download: https://code.visualstudio.com/
-Run installer and select:
-* Add "Open with Code" to context menu (optional convenience)
-* Add VS Code to PATH (so `code .` works in PowerShell)
-
-### 2. Open the Project
-```powershell
-cd C:\Dev\Data-Visualization-GUIs
-code .
-```
-
-### 3. Install Extensions
-In VS Code (left sidebar Extensions):
-* Python (Microsoft)
-* Pylance
-* GitLens (optional for history)
-* (Optional) Jupyter if you plan notebooks
-
-### 4. Select Interpreter
-Press `Ctrl+Shift+P` → "Python: Select Interpreter" → choose your conda env (`dv-guis`) or `.venv` path.
-
-### 5. Create venv (If Not Done)
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-Then re-select the interpreter pointing to `.venv`.
-```
-
-### 7. Git Basics
-git clone https://github.com/FelixNagler-FSU/Data-Visualization-GUIs.git
-cd Data-Visualization-GUIs
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python GUI_capa-cycle.py
-```
-```powershell
-git status
-git add README.md
-git commit -m "Update README with setup details"
-git push origin 251022_code-development
-```
-
-### 8. Common First-Time Issues
-| Symptom | Fix |
-|---------|-----|
-| VS Code uses wrong Python | Re-select interpreter; ensure environment activated in terminal. |
-| Cannot import packages | Verify `pip list` inside the selected interpreter shows dependencies. |
-| Long path errors | Move repo to `C:\Dev` or enable long paths in Git (`git config --system core.longpaths true`). |
-
----
-*Last updated: 2025-11-13 (deduplicated setup instructions)*
+*Last updated: 2025-11-19 (streamlined for first-time users)*
